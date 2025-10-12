@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+    
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css"/>
+    
+            <meta name="viewport" content="width=device-width,
+                initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <style>
+                #map_80f967517f9c941c263245046d3472d9 {
+                    position: relative;
+                    width: 100.0%;
+                    height: 100.0%;
+                    left: 0.0%;
+                    top: 0.0%;
+                }
+                .leaflet-container { font-size: 1rem; }
+            </style>
+
+            <style>html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            </style>
+
+            <style>#map {
+                position:absolute;
+                top:0;
+                bottom:0;
+                right:0;
+                left:0;
+                }
+            </style>
+
+            <script>
+                L_NO_TOUCH = false;
+                L_DISABLE_3D = false;
+            </script>
+
+        
+</head>
+<body>
+    
+    
+            <div class="folium-map" id="map_80f967517f9c941c263245046d3472d9" ></div>
+        
+</body>
+<script>
+    
+    
+            var map_80f967517f9c941c263245046d3472d9 = L.map(
+                "map_80f967517f9c941c263245046d3472d9",
+                {
+                    center: [20.5937, 78.9629],
+                    crs: L.CRS.EPSG3857,
+                    ...{
+  "zoom": 5,
+  "zoomControl": true,
+  "preferCanvas": false,
+}
+
+                }
+            );
+
+            
+
+        
+    
+            var tile_layer_5262d19821f07266759d43bfa0cea194 = L.tileLayer(
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                {
+  "minZoom": 0,
+  "maxZoom": 19,
+  "maxNativeZoom": 19,
+  "noWrap": false,
+  "attribution": "\u0026copy; \u003ca href=\"https://www.openstreetmap.org/copyright\"\u003eOpenStreetMap\u003c/a\u003e contributors",
+  "subdomains": "abc",
+  "detectRetina": false,
+  "tms": false,
+  "opacity": 1,
+}
+
+            );
+        
+    
+            tile_layer_5262d19821f07266759d43bfa0cea194.addTo(map_80f967517f9c941c263245046d3472d9);
+        
+    
+            var marker_b3969ecc11d9be8cf7e12052b868425c = L.marker(
+                [10.8505, 76.2711],
+                {
+}
+            ).addTo(map_80f967517f9c941c263245046d3472d9);
+        
+    
+            var icon_d6105b67dc2d8175467a81af814b793f = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "red",
+  "iconColor": "white",
+  "icon": "info-sign",
+  "prefix": "glyphicon",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+        var popup_b5c09a3b8c13fd28e8239b8a7de279b0 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_8f0d3f8fd64abd442dc61d911eb2b322 = $(`<div id="html_8f0d3f8fd64abd442dc61d911eb2b322" style="width: 100.0%; height: 100.0%;">floods in Kerala have submerged many villages . many villages have been flooded by floods .</div>`)[0];
+                popup_b5c09a3b8c13fd28e8239b8a7de279b0.setContent(html_8f0d3f8fd64abd442dc61d911eb2b322);
+            
+        
+
+        marker_b3969ecc11d9be8cf7e12052b868425c.bindPopup(popup_b5c09a3b8c13fd28e8239b8a7de279b0)
+        ;
+
+        
+    
+    
+                marker_b3969ecc11d9be8cf7e12052b868425c.setIcon(icon_d6105b67dc2d8175467a81af814b793f);
+            
+    
+            var marker_ce23898bf77fbb3659534858a4a41dac = L.marker(
+                [36.2048, 138.2529],
+                {
+}
+            ).addTo(map_80f967517f9c941c263245046d3472d9);
+        
+    
+            var icon_255cd084bcf52a0a677d021488bb2101 = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "red",
+  "iconColor": "white",
+  "icon": "info-sign",
+  "prefix": "glyphicon",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+        var popup_663a092675e87a4c86e2a9cc9363c665 = L.popup({
+  "maxWidth": "100%",
+});
+
+        
+            
+                var html_7115a23fb6b664cdacdc00cc581a5296 = $(`<div id="html_7115a23fb6b664cdacdc00cc581a5296" style="width: 100.0%; height: 100.0%;">quake in japan causes damage .</div>`)[0];
+                popup_663a092675e87a4c86e2a9cc9363c665.setContent(html_7115a23fb6b664cdacdc00cc581a5296);
+            
+        
+
+        marker_ce23898bf77fbb3659534858a4a41dac.bindPopup(popup_663a092675e87a4c86e2a9cc9363c665)
+        ;
+
+        
+    
+    
+                marker_ce23898bf77fbb3659534858a4a41dac.setIcon(icon_255cd084bcf52a0a677d021488bb2101);
+            
+</script>
+</html>
