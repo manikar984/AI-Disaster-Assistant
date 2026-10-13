@@ -25,7 +25,7 @@ once a stage is proven.
 | # | Stage | State | Evidence |
 |---|---|---|---|
 | 0 | Plan approved; repository prepared | **done** | `docs/DEPLOY-CHECKLIST.md`; commits `e9cf9b4`… |
-| 1 | Owner prerequisites: Oracle account, SSH key, hostname, SMTP account | **in progress — the owner's first signup attempt failed; triage in `docs/DEPLOY-CHECKLIST.md` §1, exact error awaited** | this file, §1 record |
+| 1 | Owner prerequisites: Oracle account, SSH key, hostname, SMTP account | **in progress — the first signup attempt failed at the card-verification step**; the bank-controls and exact-billing-details checklist is in `docs/DEPLOY-CHECKLIST.md` §1, and the escalation email is below | this file, §1 record |
 | 2 | VM created, networking, reserved IP, DNS record | not started | |
 | 3 | Provisioned: packages, service account, units, proxy config | not started | |
 | 4 | Application installed in `/opt/disaster-assistant`, frontend built | not started | |
@@ -65,7 +65,7 @@ Waiting on the owner. To be filled in as each item is confirmed:
 | Item | Value to record | State |
 |---|---|---|
 | Oracle home region chosen | e.g. `ap-hyderabad-1` | pending |
-| Oracle tenancy created | yes/no + welcome email received | **first attempt failed** — the failure point and the verbatim error message are not yet recorded here |
+| Oracle tenancy created | yes/no + welcome email received | **failed at card verification** (Oracle declines the authorisation before creating the account). Verbatim error text not yet recorded; the bank app's transaction/SMS alert for that attempt is the thing that shows *why* it declined |
 | Always Free instance shape available | A1 visible in console, or capacity error text | pending |
 | SSH key generated | `~/.ssh/id_ed25519.pub` fingerprint only | pending |
 | Hostname | the DuckDNS subdomain or domain | pending |
