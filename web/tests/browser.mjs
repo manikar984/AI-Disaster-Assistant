@@ -2,7 +2,7 @@
 // Requires a built frontend served by the FastAPI application on a disposable
 // database (see .github/scripts/browser-smoke.sh). External feeds stay disabled.
 import assert from 'node:assert/strict';
-import { launchBrowser, instrumentPage, reportFailure, checkpoint, layoutSnapshot } from './browser-helpers.mjs';
+import { launchBrowser, instrumentPage, reportFailure, checkpoint, layoutSnapshot, waitForRowCount } from './browser-helpers.mjs';
 
 const { browser, channel } = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
@@ -21,7 +21,8 @@ try {
   checkpoint('search filter');
   await page.getByRole('textbox', { name: 'Search locations or incidents' }).fill('Japan');
   await page.getByRole('button', { name: /Earthquake sample Japan/ }).waitFor();
-  assert.equal(await page.locator('.incident-row').count(), 1, 'Search for a sample location returns exactly one row');
+  await waitForRowCount(page, 1);
+  assert.match(await page.locator('.incident-row').innerText(), /Japan/, 'The filtered row belongs to the searched location');
   await page.getByRole('button', { name: 'Clear search' }).click();
   assert.equal(await page.locator('.leaflet-container').count(), 1);
   checkpoint('registration');

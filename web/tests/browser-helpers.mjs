@@ -116,6 +116,20 @@ export async function layoutSnapshot(page) {
   }
 }
 
+/**
+ * Wait until the incident feed has settled on an exact number of rows.
+ * Reading the row count immediately after typing a search term races the
+ * re-fetch, which made the CI run fail intermittently with the unfiltered list.
+ */
+export async function waitForRowCount(page, expected) {
+  try {
+    await page.waitForFunction((count) => document.querySelectorAll('.incident-row').length === count, expected, { timeout: 15000 });
+  } catch (error) {
+    const actual = await page.locator('.incident-row').count();
+    throw new Error(`Incident feed did not settle at ${expected} row(s); saw ${actual}. ${String(error.message).split('\n')[0]}`);
+  }
+}
+
 export async function reportFailure(context, page, evidence, error, extra = {}) {
   const message = error && error.message ? error.message.split('\n').slice(0, 3).join(' / ') : String(error);
   const lines = [
