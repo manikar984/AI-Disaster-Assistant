@@ -1,0 +1,16 @@
+CREATE TABLE users(id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'user', created_at TEXT NOT NULL);
+CREATE TABLE sessions(token TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE, expires_at TEXT NOT NULL);
+CREATE TABLE locations(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE, name TEXT NOT NULL, lat REAL NOT NULL, lon REAL NOT NULL, radius REAL NOT NULL, min_severity TEXT NOT NULL, email_enabled INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE sources(id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL, status TEXT NOT NULL, last_success TEXT, last_error TEXT);
+CREATE TABLE ingestion_runs(id INTEGER PRIMARY KEY, source_id TEXT REFERENCES sources, started_at TEXT NOT NULL, finished_at TEXT, records INTEGER DEFAULT 0, errors INTEGER DEFAULT 0, error TEXT);
+CREATE TABLE incidents(id INTEGER PRIMARY KEY, type TEXT NOT NULL, location TEXT NOT NULL, lat REAL, lon REAL, severity TEXT NOT NULL, verification TEXT NOT NULL, confidence TEXT NOT NULL, mode TEXT NOT NULL, summary TEXT NOT NULL, first_detected TEXT NOT NULL, last_updated TEXT NOT NULL, published_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1);
+CREATE TABLE reports(id INTEGER PRIMARY KEY, source TEXT NOT NULL, external_id TEXT NOT NULL, url TEXT, text TEXT NOT NULL, location TEXT NOT NULL, lat REAL, lon REAL, published_at TEXT NOT NULL, collected_at TEXT NOT NULL, mode TEXT NOT NULL, official INTEGER NOT NULL, raw TEXT NOT NULL, user_id INTEGER REFERENCES users ON DELETE SET NULL, UNIQUE(source, external_id));
+CREATE TABLE incident_reports(incident_id INTEGER REFERENCES incidents ON DELETE CASCADE, report_id INTEGER REFERENCES reports ON DELETE CASCADE, PRIMARY KEY(incident_id, report_id));
+CREATE TABLE timeline(id INTEGER PRIMARY KEY, incident_id INTEGER REFERENCES incidents ON DELETE CASCADE, created_at TEXT NOT NULL, status TEXT NOT NULL, note TEXT NOT NULL);
+CREATE TABLE notifications(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE, incident_id INTEGER REFERENCES incidents ON DELETE CASCADE, version INTEGER NOT NULL, message TEXT NOT NULL, created_at TEXT NOT NULL, read_at TEXT, UNIQUE(user_id, incident_id, version));
+CREATE TABLE deliveries(id INTEGER PRIMARY KEY, notification_id INTEGER NOT NULL REFERENCES notifications ON DELETE CASCADE, channel TEXT NOT NULL, status TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt TEXT NOT NULL, last_error TEXT, sent_at TEXT, UNIQUE(notification_id,channel));
+CREATE TABLE audit(id INTEGER PRIMARY KEY, actor_id INTEGER REFERENCES users ON DELETE SET NULL, action TEXT NOT NULL, incident_id INTEGER REFERENCES incidents, note TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX incidents_filter ON incidents(mode, last_updated);
+CREATE INDEX report_time ON reports(published_at);
+CREATE INDEX outbox_due ON deliveries(status, next_attempt);
+CREATE INDEX notification_user ON notifications(user_id, created_at);

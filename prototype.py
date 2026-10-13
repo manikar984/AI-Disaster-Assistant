@@ -5,6 +5,7 @@
 import pandas as pd
 import json
 import folium
+from html import escape
 import streamlit as st
 from streamlit_folium import st_folium
 import tweepy  # ✅ For fetching real-time X (Twitter) data
@@ -23,16 +24,19 @@ with open("disaster_data.json", "r") as f:
 import streamlit as st
 import tweepy
 
-BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAO8d4wEAAAAAAVLWKEfC3DaExMpqEDo0Gj8ugQU%3DeccH0IA4cPHLZXDR50X4OxhrgB4UhlhO1qtvN3CXztaB64314A"
+import os
+BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "")
 client = tweepy.Client(bearer_token=BEARER_TOKEN)
 
 @st.cache_data(ttl=300)
 def fetch_disaster_tweets():
+    if not BEARER_TOKEN:
+        return []
     query = "flood OR earthquake OR fire OR cyclone OR storm -is:retweet lang:en"
     try:
         tweets = client.search_recent_tweets(
-            query=query, 
-            tweet_fields=["created_at"], 
+            query=query,
+            tweet_fields=["created_at"],
             max_results=10
         )
         tweet_data = []
@@ -55,7 +59,7 @@ def fetch_disaster_tweets():
 # -------------------------
 # Fetch tweets (cached)
 realtime_data = fetch_disaster_tweets()
-data.extend(realtime_data)
+data.extend([{**r, "data_mode": "live"} for r in realtime_data])
 df = pd.DataFrame(data)
 
 # -------------------------
@@ -66,12 +70,12 @@ with open("disaster_data.json", "r") as f:
 
 # Merge static + live tweet data
 realtime_data = fetch_disaster_tweets()
-data.extend(realtime_data)
+data.extend([{**r, "data_mode": "live"} for r in realtime_data])
 df = pd.DataFrame(data)
 
 # Merge static + live tweet data
 realtime_data = fetch_disaster_tweets()
-data.extend(realtime_data)
+data.extend([{**r, "data_mode": "live"} for r in realtime_data])
 
 # -------------------------
 # Step 1b: Update Static Dataset
@@ -83,18 +87,9 @@ with open("disaster_data.json", "r") as f:
 # Fetch live tweets (cached)
 live_data = fetch_disaster_tweets()
 
-# Only update static dataset if new tweets exist
-if live_data:
-    combined_data = static_data + live_data
-    try:
-        with open("disaster_data.json", "w") as f:
-            json.dump(combined_data, f, indent=4)
-        st.success("✅ Static dataset updated with latest tweets!")
-    except Exception as e:
-        st.warning(f"⚠️ Could not update static dataset: {e}")
-else:
-    st.info("ℹ️ Using only cached/static data (no new live tweets).")
-    combined_data = static_data
+# Never overwrite the historical fixture with live records.
+combined_data = [{**r, "data_mode": "sample"} for r in static_data] + [{**r, "data_mode": "live"} for r in live_data]
+st.warning("Legacy prototype: static records are historical samples, not current alerts.")
 
 # Create dataframe
 df = pd.DataFrame(combined_data)
@@ -213,14 +208,16 @@ def get_color_by_severity(sev):
 
 for index, row in df.iterrows():
     if row['label'] == "Disaster":
-        coords = location_coords.get(row['location'], [20.5937, 78.9629])
+        coords = location_coords.get(row['location'])
+        if coords is None:
+            continue
         folium.CircleMarker(
             location=coords,
             radius=10 if row['severity'] == "High" else 7 if row['severity'] == "Medium" else 5,
             color=get_color_by_severity(row['severity']),
             fill=True,
             fill_opacity=0.7,
-            popup=f"<b>{row['location']}</b><br>{row['summary']}<br><b>Severity:</b> {row['severity']}",
+            popup=f"<b>{escape(str(row['location']))}</b><br>{escape(str(row['summary']))}<br><b>Severity:</b> {escape(str(row['severity']))}",
         ).add_to(m)
 
 st.write("### 🗺️ Disaster Map (with Live Updates)")
@@ -240,4 +237,4 @@ col3.metric("🔴 High Severity", len(df[df['severity'] == "High"]))
 # Step 10: Footer
 # -------------------------
 st.markdown("---")
-st.caption("💡 Developed by Ajay — BuildAthon 2025 | Powered by OpenAI, Streamlit & X API")
+st.caption("💡 Developed by Ajay — BuildAthon 2025 | Rule-based prototype | Streamlit & optional X API")

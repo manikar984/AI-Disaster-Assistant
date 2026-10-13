@@ -1,0 +1,33 @@
+services:
+  api:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_PATH: /data/assistant.db
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - assistant-data:/data
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_PATH: /data/assistant.db
+    command: ["python", "-m", "backend.worker"]
+    volumes:
+      - assistant-data:/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      disable: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+volumes:
+  assistant-data:
