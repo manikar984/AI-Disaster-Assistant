@@ -1,5 +1,16 @@
 # Verification record
 
+### Live pilot checks (running API + worker on port 8000)
+
+| Check | Observed response |
+|---|---|
+| `POST /api/auth/register` (no SMTP configured) | `{"ok":true,"email_verified":false,"verification_email":"unavailable"}` — the account is created and the absent provider is reported, not claimed |
+| `GET /api/me` | `{"id":2,"email":"preview-check@example.org","role":"user","email_verified":0}` |
+| `GET /api/sessions` | one session, 12-character prefix, `current: true`, created/last-seen set, expiry 30 days out (no token value) |
+| `POST /api/auth/forgot` for an unknown address | `202` with the same generic body a known address gets |
+| `GET /api/ready` | `degraded` — `"no live source is enabled"`, `worker: alive`, heartbeat age 2 s, 4 sources `disabled` |
+| `GET /api/incidents?mode=all` | 5 sample incidents; the two with coordinates report `point`, the three without report `unknown` (migration 003 applied on start) |
+
 ## 2026-10-13 — account security: confirmation, recovery, session control
 
 | Check | Command | Actual result |

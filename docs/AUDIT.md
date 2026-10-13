@@ -206,11 +206,11 @@ rehearsed with a real data copy.
 
 ## 9. Prioritised implementation plan
 
-**Delivery status: P0 items 1 and 2 are implemented and verified on
+**Delivery status: P0 items 1, 2 and 3 are implemented and verified on
 `arena/0aaecd40-ai-disaster-assistant` (source registry with USGS/GDACS/RSS/CAP
 adapters, per-source health, worker heartbeat, `/api/ready`, `/api/policy`);
 see `docs/STATUS.md` for the live board and `docs/VERIFICATION.md` for the
-commands behind every claim. Items 3-8 and P1/P2 remain open.**
+commands behind every claim. Items 4-8 and P1/P2 remain open.**
 
 **P0 — trust, correctness and security (no paid credentials needed)**
 

@@ -10,6 +10,7 @@ An evidence-first disaster monitoring **pilot**, evolved from the original Strea
 - Registration, login/logout, hashed-password cookie sessions, private saved locations, consent, alert history and account deletion.
 - Normalized durable reports, conservative classification/severity screening, duplicate suppression, nearby community grouping, official event revisions.
 - Single-worker USGS polling with backoff, malformed-record isolation and visible source health. Network access needed; live fetching unverified in Arena.
+- Accounts with confirmed email addresses: a new account gets in-app alerts immediately and email alerts only after it confirms its address with a single-use link; password recovery uses a 1-hour single-use link that signs out every device, and sessions can be listed and revoked (`SESSION_DAYS`, `SESSION_IDLE_DAYS`).
 - Geographic/severity/freshness/trust gates, in-app notifications, and an SMTP outbox with retries and delivery-attempt logs. The SMTP path is exercised against a real server in the test suite; delivery through a paid provider is awaiting the owner's credentials.
 - Administrator status/severity reviews and audit log, ingestion/delivery inspection.
 - Versioned SQL migration, configuration example, container configuration, CI definition and tests.
@@ -76,6 +77,7 @@ See [actual verification results](docs/VERIFICATION.md), not just these commands
 | `docs/AUDIT.md` | Actual repository findings and implementation plan |
 | `docs/ARCHITECTURE.md` | Contracts, trust model and technology decisions |
 | `docs/OPERATIONS.md` | Setup, deployment, security, costs, retention, remaining work |
+| `docs/HOSTING.md` | Hosting options compared on worker/persistence/HTTPS, with the recommendation |
 | `docs/SOURCES.md` | Every adapter, its publisher, mapping policy and health states |
 | `docs/HOSTING.md` | Hosting comparison and the decision (Oracle Always Free) |
 | `docs/DEPLOYMENT.md`, `deploy/` | Runbook, systemd units, Caddy config, provisioning and backup scripts |
