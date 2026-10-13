@@ -23,20 +23,16 @@ jobs:
         env:
           DATABASE_PATH: /tmp/disaster-browser-ci.db
           USGS_ENABLED: 'false'
-        run: |
-          python -m backend.cli sample
-          uvicorn backend.app:app --host 0.0.0.0 --port 8001 &
-          API_PID=$!
-          trap 'kill $API_PID' EXIT
-          python - <<'PY'
-          import time, urllib.request
-          for attempt in range(30):
-              try:
-                  urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=2)
-                  break
-              except OSError:
-                  time.sleep(1)
-          else:
-              raise SystemExit('API did not start')
-          PY
-          npm run test:browser --prefix web
+        run: bash .github/scripts/browser-smoke.sh
+
+      - name: Static preview smoke test (built frontend, no backend)
+        run: npm run test:static --prefix web
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-diagnostics
+          path: web/test-results
+          if-no-files-found: ignore
+          retention-days: 7

@@ -31,6 +31,17 @@ jobs:
 
       - run: npm run build --prefix web -- --base=/AI-Disaster-Assistant/
 
+      # The project-path base applies to this workflow only. The application
+      # build used by FastAPI and the integration tests stays at the root path.
+      - name: Verify project-path asset URLs
+        run: |
+          set -eu
+          test -f web/dist/index.html
+          grep -q 'src="/AI-Disaster-Assistant/assets/' web/dist/index.html
+          grep -q 'href="/AI-Disaster-Assistant/assets/' web/dist/index.html
+          ! grep -qE '(src|href)="/assets/' web/dist/index.html
+          echo "GitHub Pages build references /AI-Disaster-Assistant/assets/ only."
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
