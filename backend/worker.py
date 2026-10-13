@@ -3,7 +3,8 @@
 Run exactly one worker per database. Every enabled feed from the source
 registry is polled on its own schedule with exponential backoff after failures;
 a failing feed never causes sample data to be loaded, and a malformed record
-never aborts a poll.
+never aborts a poll. The same loop drains the notification outbox and, once a
+day, applies the retention policy in `backend/retention.py`.
 
 The worker publishes a heartbeat (``runtime_state``) so the API and operators can
 tell "no new incidents" apart from "the worker died".
@@ -16,7 +17,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from .db import CYCLE_KEY, HEARTBEAT_KEY, connect, migrate, now, set_runtime_state
-from . import mailer
+from . import mailer, retention
 from .engine import qualify_notifications
 from .poller import poll_target
 from .sources import feed_targets, usgs
@@ -130,6 +131,13 @@ def main():
             with connect() as db:
                 qualify_notifications(db)
             deliver_email()
+            # Retention runs at most once a day and never blocks delivery: the
+            # policy marker could not be written, so it simply tries again next
+            # cycle instead of taking the worker down with it.
+            try:
+                retention.purge_if_due()
+            except Exception as exc:  # pragma: no cover - defensive, logged not raised
+                log.error(json.dumps({'event': 'retention_failed', 'error': type(exc).__name__}))
         except Exception as exc:
             log.error(json.dumps({'event': 'worker_cycle_failed', 'error': type(exc).__name__}))
         time.sleep(MAX_CYCLE_SLEEP)

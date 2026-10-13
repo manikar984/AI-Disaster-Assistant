@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import mailer
+from . import mailer, retention
 from .db import connect, migrate, now
 from .engine import ingest
 from .poller import poll_all, source_rows
@@ -46,6 +46,30 @@ def _poll(only):
     return 1 if failed else 0
 
 
+def _retention(dry_run):
+    """Show or apply the retention policy from docs/OPERATIONS.md.
+
+    Prints per-class row counts. Nothing is deleted unless the operator leaves
+    --dry-run off, and no class of data outside the policy is touched.
+    """
+    with connect() as db:
+        counts = retention.purge(db, dry_run=dry_run)
+    counts = {key: value for key, value in counts.items() if value}
+    print('Retention window (days): ' + ', '.join(f'{key}={value}' for key, value in retention.POLICY.items()))
+    kept = 'Sample rows, corroborated/official incidents, user accounts and recent records are never purged.'
+    if not counts:
+        print(('Would remove: nothing. ' if dry_run else 'Removed: nothing. ') + kept)
+        return 0
+    print('Would remove:' if dry_run else 'Removed:')
+    for key, value in sorted(counts.items()):
+        print(f'  {key:<20} {value}')
+    print(kept)
+    print('Purged rows still exist in any backup taken before now, until that backup expires.')
+    if dry_run:
+        print('Dry run only — nothing was deleted. Re-run without --dry-run to apply.')
+    return 0
+
+
 def _email_check(recipient):
     """Prove the configured mailbox end-to-end, exactly as the worker sends it.
 
@@ -79,10 +103,11 @@ def _email_check(recipient):
 
 def main():
     parser = argparse.ArgumentParser(description='Disaster Assistant operator tasks')
-    parser.add_argument('command', choices=['sample', 'admin', 'reset-password', 'sources', 'poll', 'email-check'])
+    parser.add_argument('command', choices=['sample', 'admin', 'reset-password', 'sources', 'poll', 'email-check', 'retention'])
     parser.add_argument('--email')
     parser.add_argument('--source', default='', help='poll only this configured source id')
     parser.add_argument('--to', default='', help='email-check: mailbox that should receive the test message')
+    parser.add_argument('--dry-run', action='store_true', help='retention: report what would be removed without removing it')
     args = parser.parse_args()
     migrate()
 
@@ -93,6 +118,8 @@ def main():
         raise SystemExit(_poll(args.source))
     if args.command == 'email-check':
         raise SystemExit(_email_check(args.to))
+    if args.command == 'retention':
+        raise SystemExit(_retention(args.dry_run))
 
     with connect() as db:
         if args.command in ('admin', 'reset-password'):

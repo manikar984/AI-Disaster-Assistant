@@ -39,6 +39,8 @@ USGS_ENABLED=true python -m backend.worker
 python -m backend.cli admin --email admin@example.com
 # Prove the email channel once SMTP_* is configured (sends one labelled test message):
 python -m backend.cli email-check --to you@example.org
+# See what the retention policy would delete (add nothing to apply it; the worker runs it daily):
+python -m backend.cli retention --dry-run
 ```
 
 Set the same `USGS_ENABLED` value for API and worker. See `.env.example` and the runbook for environment loading, production cookies, SMTP and Compose. Never commit `.env`.

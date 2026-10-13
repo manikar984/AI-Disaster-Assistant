@@ -1,5 +1,20 @@
 # Verification record
 
+## 2026-10-13 — retention enforcement
+
+| Check | Actual result |
+|---|---|
+| `pytest tests/test_retention.py -q` | 5 passed |
+| `pytest -q` | **99 passed**, 1 third-party deprecation warning |
+| `python -m backend.cli retention --dry-run` (pilot database) | `Would remove: nothing.` — every class inside its window, nothing deleted |
+| Dry run against seeded data | Reports the seven expired classes with exact counts, leaves the raw payload, both reports, all four incidents, both notifications and both audit rows untouched |
+| Real purge against seeded data | Removed exactly: 1 raw payload (nulled, the report row kept), 1 ingestion run, 1 delivery + 1 notification, 1 inactive unverified incident, 1 expired session, 1 expired token, 1 old audit row. Kept: the corroborated incident, the fresh incident, the sample incident, the fresh notification/delivery, the live session/token, the fresh audit row, and the account row |
+| Idempotence | Second purge returns `{}` — nothing is reported as deleted twice |
+| Worker scheduling | `purge_if_due()` purges and writes a `runtime_state` marker; an immediate second call returns `None`; after ageing the marker past the window it runs again |
+
+Not covered here: the off-host backup copy, the monthly restore drill, and any
+legal review of the audit window — those stay owner/operator tasks.
+
 ## 2026-10-13 — email channel end-to-end and the release gate
 
 | Check | Actual result |

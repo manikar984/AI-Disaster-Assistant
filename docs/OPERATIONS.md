@@ -153,7 +153,14 @@ reach a log line, an API response or the `deliveries.last_error` column.
 ## Privacy, retention and backups
 Minimize collection: email, scrypt password, explicit saved coordinates, consent and delivery history. No background GPS. Private tables are user-scoped. Admin report/audit inspection is privileged. Account deletion removes sessions, locations, notifications and delivery rows; reports lose user linkage/raw payload identifiers. Public report text itself is retained, so warn users not to put personal information there. A moderation/removal process for sensitive report text remains necessary.
 
-**Operator retention policy to enforce before production:** raw source payloads 30 days, ingestion runs 30 days, delivery history 90 days, inactive unverified incidents 90 days, security/admin audit 1 year (subject to legal requirements). No automatic retention purger implemented. Include upstream redistribution/deletion rules in the final policy. Never log passwords, cookies, tokens or complete SMTP errors. Protect logs and database access at the host.
+**Retention policy — enforced, not just documented** (`backend/retention.py`): raw source payloads 30 days, ingestion runs 30 days, delivery and notification history 90 days, inactive never-corroborated incidents 90 days, security/admin audit 1 year (subject to legal requirements). Expired sessions and single-use tokens go as soon as they expire. The worker applies it at most once a day; an operator can preview or force it:
+
+```sh
+python -m backend.cli retention --dry-run   # counts per class, deletes nothing
+python -m backend.cli retention             # applies the policy, prints what it removed
+```
+
+Never purged whatever the clock says: sample rows (the labelled fixtures), incidents that are corroborated, officially confirmed, resolved or disputed, incidents updated inside the window, user accounts, and audit entries inside the window. Purging is irreversible in the live database — a row removed today still exists in every backup taken before the purge, until that backup expires, which the deployed privacy policy must state. Include upstream redistribution/deletion rules in the final policy. Never log passwords, cookies, tokens or complete SMTP errors. Protect logs and database access at the host.
 
 Nightly backup with Python `sqlite3.Connection.backup()` (not naive copying of a live WAL database). Encrypt offsite backups, restrict keys and test restoration monthly. Suggested 30-day backup retention; deleted account data can remain in backups until expiry—document this in deployed privacy policy. Define/test RPO and RTO with the deployment owner; no guarantees measured here.
 
