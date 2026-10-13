@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from . import mailer
 from .db import connect, migrate, now
 from .engine import ingest
 from .poller import poll_all, source_rows
@@ -45,11 +46,43 @@ def _poll(only):
     return 1 if failed else 0
 
 
+def _email_check(recipient):
+    """Prove the configured mailbox end-to-end, exactly as the worker sends it.
+
+    Prints the configuration summary and the provider's reply code. Never prints
+    a credential; the mailer redacts the password from every error it raises.
+    """
+    try:
+        config = mailer.settings()
+    except mailer.MailError as exc:
+        print(f'Configuration problem: {exc}')
+        return 1
+    print(f'SMTP configuration: {mailer.describe(config)}')
+    if not config['configured']:
+        print('Email is disabled: set SMTP_HOST and SMTP_FROM (see .env.example).')
+        return 1
+    if not recipient or '@' not in recipient:
+        print('Name the mailbox that should receive the test: email-check --to you@example.org')
+        return 1
+    try:
+        code = mailer.send_verification(recipient, detail='Requested by the operator email-check command.')
+    except mailer.MailError as exc:
+        print(f'Delivery failed: {exc}')
+        print('The message was not sent. Nothing in this output contains the SMTP password.')
+        return 1
+    print(f'Provider accepted the message (final SMTP reply {code}).')
+    print(f'Confirm that it arrived at {recipient} (check the spam folder), then record it in '
+          'docs/VERIFICATION.md. Until that message arrives, the email channel is configured '
+          'but not proven.')
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description='Disaster Assistant operator tasks')
-    parser.add_argument('command', choices=['sample', 'admin', 'reset-password', 'sources', 'poll'])
+    parser.add_argument('command', choices=['sample', 'admin', 'reset-password', 'sources', 'poll', 'email-check'])
     parser.add_argument('--email')
     parser.add_argument('--source', default='', help='poll only this configured source id')
+    parser.add_argument('--to', default='', help='email-check: mailbox that should receive the test message')
     args = parser.parse_args()
     migrate()
 
@@ -58,6 +91,8 @@ def main():
         return
     if args.command == 'poll':
         raise SystemExit(_poll(args.source))
+    if args.command == 'email-check':
+        raise SystemExit(_email_check(args.to))
 
     with connect() as db:
         if args.command in ('admin', 'reset-password'):

@@ -1,0 +1,153 @@
+"""Outbound email: one place builds messages, one place talks SMTP.
+
+The worker, the operator verification command (`python -m backend.cli
+email-check`) and the tests all use this module, so a channel that is proven
+with the CLI is proven for real alerts too.
+
+Configuration (environment only, never committed and never sent to the browser):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `SMTP_HOST` | unset | Mail submission host. Unset means email is disabled. |
+| `SMTP_PORT` | `587` | 587 for STARTTLS, 465 for implicit TLS, 25 for `plain`. |
+| `SMTP_SECURITY` | `starttls` | `starttls`, `ssl` or `plain`. `plain` is only for a local relay. |
+| `SMTP_USER` / `SMTP_PASSWORD` | unset | Authenticate only when `SMTP_USER` is set. |
+| `SMTP_FROM` | unset | Envelope/from address. Required for any send. |
+| `SMTP_TIMEOUT` | `20` | Seconds for connect and command replies. |
+
+Failure reasons never contain the password: it is redacted from every message
+this module raises.
+"""
+
+import os
+import smtplib
+import ssl
+from email.message import EmailMessage
+
+DEFAULT_PORT = 587
+DEFAULT_TIMEOUT = 20
+SECURITY_MODES = ('starttls', 'ssl', 'plain')
+ALERT_SUBJECT = 'Disaster Assistant — incident update (not a government warning)'
+TEST_SUBJECT = 'Disaster Assistant — SMTP verification message (not a government warning)'
+
+
+class MailError(RuntimeError):
+    """Delivery or configuration failure, safe to print (never contains secrets)."""
+
+
+def settings():
+    """Read the SMTP configuration once, validating the shapes we rely on."""
+    security = (os.getenv('SMTP_SECURITY', 'starttls') or 'starttls').strip().lower()
+    if security not in SECURITY_MODES:
+        raise MailError(f'SMTP_SECURITY must be one of {", ".join(SECURITY_MODES)}, got {security!r}')
+    try:
+        port = int(os.getenv('SMTP_PORT', str(DEFAULT_PORT)))
+    except ValueError:
+        raise MailError('SMTP_PORT must be a whole number') from None
+    if not 1 <= port <= 65535:
+        raise MailError('SMTP_PORT must be between 1 and 65535')
+    try:
+        timeout = float(os.getenv('SMTP_TIMEOUT', str(DEFAULT_TIMEOUT)))
+    except ValueError:
+        raise MailError('SMTP_TIMEOUT must be a number of seconds') from None
+    host = os.getenv('SMTP_HOST', '').strip()
+    sender = os.getenv('SMTP_FROM', '').strip()
+    return {
+        'host': host,
+        'port': port,
+        'security': security,
+        'user': os.getenv('SMTP_USER', '').strip(),
+        'password': os.getenv('SMTP_PASSWORD', ''),
+        'sender': sender,
+        'timeout': timeout,
+        'configured': bool(host and sender),
+    }
+
+
+def describe(config=None):
+    """One-line configuration summary. Never includes the password."""
+    config = config or settings()
+    return (
+        f"host={config['host'] or '(unset)'} port={config['port']} "
+        f"security={config['security']} from={config['sender'] or '(unset)'} "
+        f"auth={'yes' if config['user'] else 'no'}"
+    )
+
+
+def build_message(recipient, subject, body, *, message_id=None, config=None):
+    """Build the exact message that is about to be sent."""
+    config = config or settings()
+    message = EmailMessage()
+    message['Subject'] = subject
+    message['From'] = config['sender']
+    message['To'] = recipient
+    if message_id:
+        message['Message-ID'] = message_id
+    message['Auto-Submitted'] = 'auto-generated'
+    message['X-Disaster-Assistant-Channel'] = 'email'
+    message.set_content(body)
+    return message
+
+
+def send(message, config=None):
+    """Deliver one prepared message. Raises MailError on any failure.
+
+    Returns the two-digit SMTP reply code of the accepting command so callers can
+    report what the provider actually said.
+    """
+    config = config or settings()
+    if not config['configured']:
+        raise MailError('SMTP_HOST and SMTP_FROM must both be set before email can be sent')
+    context = ssl.create_default_context()
+    try:
+        if config['security'] == 'ssl':
+            client = smtplib.SMTP_SSL(config['host'], config['port'], timeout=config['timeout'], context=context)
+        else:
+            client = smtplib.SMTP(config['host'], config['port'], timeout=config['timeout'])
+    except Exception as exc:
+        raise MailError(_clean(f'{type(exc).__name__} connecting to {config["host"]}:{config["port"]} '
+                               f'({config["security"]}): {exc}', config)) from None
+    with client:
+        try:
+            if config['security'] == 'starttls':
+                client.starttls(context=context)
+                client.ehlo()
+            if config['user']:
+                client.login(config['user'], config['password'])
+            client.send_message(message)
+        except Exception as exc:
+            raise MailError(_clean(f'{type(exc).__name__}: {exc}', config)) from None
+        return client.noop()[0]
+
+
+def _clean(text, config):
+    """Remove anything that must never appear in a log line or API response."""
+    password = config.get('password') if config else ''
+    if password:
+        text = text.replace(password, '***')
+    return text
+
+
+def send_alert(recipient, body, notification_id):
+    """Send one incident alert for a queued notification."""
+    message = build_message(
+        recipient,
+        ALERT_SUBJECT,
+        body,
+        message_id=f'<notification-{notification_id}@disaster-assistant.local>',
+    )
+    return send(message)
+
+
+def send_verification(recipient, detail=''):
+    """Send the operator's own test message, clearly marked as a test."""
+    body = (
+        'This is a test message sent by the disaster-assistant operator command.\n\n'
+        'Nothing has happened: there is no incident behind this message. It exists to prove\n'
+        'that the configured SMTP provider accepts and delivers mail from this deployment.\n'
+        'Real alerts are labelled "incident update" and always carry the incident, its\n'
+        'verification state and a link to official guidance.\n'
+    )
+    if detail:
+        body += f'\nDiagnostic detail:\n{detail}\n'
+    return send(build_message(recipient, TEST_SUBJECT, body, message_id='<smtp-verification@disaster-assistant.local>'))

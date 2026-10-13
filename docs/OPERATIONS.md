@@ -68,6 +68,48 @@ Password changes revoke all sessions. Public registration never grants administr
 
 Migrations are ordered SQL in `backend/migrations`; the API applies them transactionally before serving. Back up before every migration. Rollback means restore database + matching code version, not editing migration markers.
 
+## Proving the email channel end-to-end
+
+What the test suite already proves, without any provider account
+(`tests/test_email.py`, real TCP + real `smtplib`, no mocks in the delivery
+path): a queued delivery becomes an `accepted` row with a `sent_at` timestamp
+and one attempt; the MIME message that arrives carries the incident, its
+verification state and the "not a government warning" label; STARTTLS is used by
+default and is verified against a pinned CA (the client never disables
+certificate validation); `AUTH PLAIN` credentials are sent only when
+`SMTP_USER` is set; rejected credentials are recorded as a `retry` with the
+SMTP reason and the password redacted out of the stored error; a provider outage
+escalates `retry` → `failed` after five attempts with 60 s → 480 s backoff; and
+`python -m backend.cli email-check` fails closed when SMTP is not configured.
+
+What only the owner can prove is delivery to a human inbox through a real
+provider. Procedure on the deployment host:
+
+1. Create an SMTP-enabled account with any transactional provider (Brevo,
+   Resend, SendGrid, Postmark, Mailgun, Amazon SES) or use a Google Workspace /
+   Gmail app password. Note the submission host, port and credential — do not
+   paste them into chat, a ticket or the repository.
+2. Put them in the host's `0600` environment file only:
+   `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls` for 587, `ssl` for 465),
+   `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` (an address the provider has
+   authorised for the domain), then restart the API and worker so both see it.
+3. `python -m backend.cli email-check --to YOUR_OWN_MAILBOX` — it prints the
+   configuration summary (never the password) and the provider's final reply.
+   Expect `Provider accepted the message (final SMTP reply 250)`.
+4. Confirm the message actually arrived (check spam). If it did, the channel is
+   proven end-to-end: record the date, provider, host and result in
+   `docs/VERIFICATION.md`. If it did not, the channel is **configured but not
+   proven** — say exactly that.
+5. To prove the alert template rather than the test template, subscribe a
+   location (My alerts → add a location with email enabled) and lower its
+   minimum severity while a real source is enabled. Inspect the queue with
+   `sqlite3 "$DATABASE_PATH" "SELECT status,attempts,last_error FROM deliveries WHERE channel='email'"`.
+   Never fabricate a disaster to create a test alert: run the sample/staging path
+   instead, which by design cannot notify, or wait for a real qualifying event.
+
+Never log or paste `SMTP_PASSWORD`; `MailError` messages are redacted before they
+reach a log line, an API response or the `deliveries.last_error` column.
+
 ## Notification semantics and recovery
 * Current (<6h), corroborated/official, non-sample events only; geographic radius + minimum severity. Critical processing ordered first. No radius represents a validated impact footprint.
 * Unique `(user, incident, version)` suppresses duplicates. Noncritical alerts capped at 20/hour/user; critical/corrections bypass cap. Official revised observations increment version. Admin review preserves a timeline and audit.
@@ -89,4 +131,4 @@ Runs record start/finish, processed count, malformed count and failure class. Re
 Not yet implemented: exported histograms/SLOs, detection-to-publication measurement, dispatch latency dashboard, false-positive rate, duplicate incident rate, pager escalation, automatic worker heartbeat and calibrated confidence evaluation. Raw timestamps do not substitute for measured SLOs.
 
 ## Remaining release gates
-PostgreSQL/PostGIS design/migration under load, source-independent corroboration and conflict detection, trained/evaluated NLP, precise affected areas, map clustering at higher volume, verified email/recovery flows, push/SMS/WhatsApp providers, admin merge/type correction/moderation, privacy export/retention tooling, account takeover protections/MFA, distributed throttling/queue leases, penetration/accessibility/load tests, disaster recovery rehearsal, and verified public HTTPS deployment.
+PostgreSQL/PostGIS design/migration under load, source-independent corroboration and conflict detection, trained/evaluated NLP, precise affected areas, map clustering at higher volume, provider-verified email delivery (tooling ready, awaiting credentials) and verified recovery flows, push/SMS/WhatsApp providers, admin merge/type correction/moderation, privacy export/retention tooling, account takeover protections/MFA, distributed throttling/queue leases, penetration/accessibility/load tests, disaster recovery rehearsal, and verified public HTTPS deployment.

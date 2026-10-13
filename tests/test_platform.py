@@ -267,10 +267,15 @@ def test_mock_smtp_acceptance(client,monkeypatch):
     monkeypatch.setenv('SMTP_FROM','alerts@example.com')
     sent=[]
     class FakeSMTP:
+        # Exercises the mailer's SMTP control flow without a socket. The real
+        # protocol conversation (STARTTLS, AUTH, DATA) is covered end to end in
+        # tests/test_email.py against a real SMTP server.
         def __init__(self,*a,**k): pass
         def __enter__(self): return self
         def __exit__(self,*a): pass
         def starttls(self,**k): pass
+        def ehlo(self,*a,**k): return (250,b'ok')
+        def noop(self): return (250,b'ok')
         def send_message(self,msg): sent.append(msg)
     monkeypatch.setattr('smtplib.SMTP',FakeSMTP)
     deliver_email()

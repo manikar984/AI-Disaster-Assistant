@@ -1,5 +1,33 @@
 # Verification record
 
+## 2026-10-13 — email channel: proven as far as this environment allows
+
+| Check | Command | Actual result |
+|---|---|---|
+| Backend suite | `python -m pytest -q` | **66 passed** (was 58), 1 Starlette deprecation warning |
+| Email suite | `python -m pytest tests/test_email.py -q` | **8 passed** |
+| CLI without configuration | `python -m backend.cli email-check --to nobody@example.org` | Exit 1, `Email is disabled: set SMTP_HOST and SMTP_FROM`, no secret printed |
+
+`tests/test_email.py` runs the whole path over real loopback TCP with a real
+SMTP server and no mocks in the delivery code. Observed behaviour: the queued
+delivery becomes `accepted` with `sent_at` set and one attempt; the received
+MIME message carries the incident, its verification state and the "not a
+government warning" label; the default `starttls` path performs EHLO → STARTTLS
+→ AUTH PLAIN → MAIL/RCPT/DATA and the client **verifies** the server certificate
+(the fixture's self-signed CA is trusted explicitly; there is no switch that
+disables verification); rejected credentials store
+`SMTPAuthenticationError…` as a `retry` with the password redacted; an outage at
+a closed port escalates `retry,retry,retry,retry,failed` with 60 s → 120 s →
+240 s → 480 s backoff; `email-check` prints the configuration summary
+(`auth=yes`, no username, no password) and, against the fixture, reports the
+provider's reply.
+
+**Not proven, and not claimed:** delivery to a human inbox through a commercial
+provider. That needs the owner's own credentials, and outbound SMTP is blocked
+in this sandbox anyway. The exact procedure and the evidence to record are in
+`docs/OPERATIONS.md`; until the owner completes step 3–4 there, the email
+channel is `configured but not proven`.
+
 ## 2026-10-13 — Milestone 4: real ingestion breadth
 
 Environment unchanged (Python 3.11.2, no Docker, egress limited to package and

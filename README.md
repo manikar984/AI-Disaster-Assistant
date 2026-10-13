@@ -10,7 +10,7 @@ An evidence-first disaster monitoring **pilot**, evolved from the original Strea
 - Registration, login/logout, hashed-password cookie sessions, private saved locations, consent, alert history and account deletion.
 - Normalized durable reports, conservative classification/severity screening, duplicate suppression, nearby community grouping, official event revisions.
 - Single-worker USGS polling with backoff, malformed-record isolation and visible source health. Network access needed; live fetching unverified in Arena.
-- Geographic/severity/freshness/trust gates, in-app notifications, SMTP outbox with retries and delivery attempt logs. Real SMTP provider delivery unverified.
+- Geographic/severity/freshness/trust gates, in-app notifications, and an SMTP outbox with retries and delivery-attempt logs. The SMTP path is exercised against a real server in the test suite; delivery through a paid provider is awaiting the owner's credentials.
 - Administrator status/severity reviews and audit log, ingestion/delivery inspection.
 - Versioned SQL migration, configuration example, container configuration, CI definition and tests.
 
@@ -36,6 +36,8 @@ python -m backend.cli sample
 USGS_ENABLED=true python -m backend.worker
 # Administrator setup (password entered privately):
 python -m backend.cli admin --email admin@example.com
+# Prove the email channel once SMTP_* is configured (sends one labelled test message):
+python -m backend.cli email-check --to you@example.org
 ```
 
 Set the same `USGS_ENABLED` value for API and worker. See `.env.example` and the runbook for environment loading, production cookies, SMTP and Compose. Never commit `.env`.
@@ -63,7 +65,9 @@ See [actual verification results](docs/VERIFICATION.md), not just these commands
 |---|---|
 | `backend/app.py`, `security.py` | API, sessions, input/ownership boundaries |
 | `backend/engine.py` | Screening, grouping, geo matching, qualification |
-| `backend/worker.py` | USGS adapter, scheduled ingestion, SMTP outbox |
+| `backend/worker.py` | Polling worker: per-source schedule with backoff, heartbeat, delivery queue |
+| `backend/poller.py`, `backend/sources/` | Source registry and the USGS, GDACS, RSS/Atom and CAP adapters |
+| `backend/verification.py`, `backend/mailer.py` | Corroboration rule; SMTP transport for the email channel |
 | `backend/db.py`, `migrations/` | Persistence and versioned SQL schema |
 | `backend/cli.py` | Explicit samples, admin provisioning, password reset |
 | `web/src/` | React dashboard, map, account and admin workflows |
@@ -72,6 +76,8 @@ See [actual verification results](docs/VERIFICATION.md), not just these commands
 | `docs/AUDIT.md` | Actual repository findings and implementation plan |
 | `docs/ARCHITECTURE.md` | Contracts, trust model and technology decisions |
 | `docs/OPERATIONS.md` | Setup, deployment, security, costs, retention, remaining work |
+| `docs/SOURCES.md` | Every adapter, its publisher, mapping policy and health states |
+| `docs/HOSTING.md` | Hosting comparison and the recommendation asked for by the owner |
 
 ## GitHub Pages
 

@@ -12,13 +12,11 @@ tell "no new incidents" apart from "the worker died".
 import json
 import logging
 import os
-import smtplib
-import ssl
 import time
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
 
 from .db import CYCLE_KEY, HEARTBEAT_KEY, connect, migrate, now, set_runtime_state
+from . import mailer
 from .engine import qualify_notifications
 from .poller import poll_target
 from .sources import feed_targets, usgs
@@ -67,23 +65,13 @@ def deliver_email():
                 db.execute("UPDATE deliveries SET status='cancelled' WHERE id=?", (item['id'],))
                 continue
         try:
-            if not os.getenv('SMTP_HOST') or not os.getenv('SMTP_FROM'):
-                raise RuntimeError('SMTP not configured')
-            msg = EmailMessage()
-            msg['Subject'] = 'Disaster Assistant — incident update (not a government warning)'
-            msg['From'] = os.environ['SMTP_FROM']
-            msg['To'] = item['email']
-            msg['Message-ID'] = f"<notification-{item['notification_id']}@disaster-assistant.local>"
-            msg.set_content(item['message'])
-            with smtplib.SMTP(os.environ['SMTP_HOST'], int(os.getenv('SMTP_PORT', '587')), timeout=20) as smtp:
-                smtp.starttls(context=ssl.create_default_context())
-                if os.getenv('SMTP_USER'):
-                    smtp.login(os.environ['SMTP_USER'], os.environ['SMTP_PASSWORD'])
-                smtp.send_message(msg)
+            mailer.send_alert(item['email'], item['message'], item['notification_id'])
             status, error, sent = 'accepted', None, now()
         except Exception as exc:
+            # Failure text is redacted by the mailer and truncated here: it is
+            # shown to operators and must never carry a credential.
             status = 'failed' if item['attempts'] >= 4 else 'retry'
-            error, sent = type(exc).__name__, None
+            error, sent = f'{type(exc).__name__}: {exc}'[:300], None
         with connect() as db:
             db.execute(
                 'UPDATE deliveries SET status=?,attempts=attempts+1,last_error=?,sent_at=?,next_attempt=? WHERE id=?',
