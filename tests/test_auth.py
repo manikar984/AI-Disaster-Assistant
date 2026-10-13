@@ -7,6 +7,7 @@ new password with every session revoked.
 """
 
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from backend.app import app, limits
 from backend.db import connect, now
+from backend import mailer
 from backend.engine import ingest, qualify_notifications
 from smtp_fixture import SmtpFixture
 from test_platform import record
@@ -49,6 +51,11 @@ def register(client, email='person@example.com'):
     return client.post('/api/auth/register', json={'email': email, 'password': PASSWORD})
 
 
+def sign_in(client, email='person@example.com', password=PASSWORD):
+    """The second call a browser makes: register no longer starts a session."""
+    return client.post('/api/auth/login', json={'email': email, 'password': password})
+
+
 def link_token(smtp, kind, index=0):
     """Pull the one-time token out of the message the user received."""
     body = smtp.parsed(index).get_content()
@@ -61,8 +68,11 @@ def test_registration_emails_a_link_that_confirms_the_account(client, monkeypatc
     with SmtpFixture() as smtp:
         use_relay(monkeypatch, smtp)
         response = register(client)
-        assert response.status_code == 201
-        assert response.json() == {'ok': True, 'email_verified': False, 'verification_email': 'sent'}
+        assert response.status_code == 202
+        assert response.json()['ok'] is True and 'message' in response.json()
+        # Registering no longer signs the caller in: the session starts on login.
+        assert client.get('/api/me').status_code == 401
+        assert sign_in(client).status_code == 200
         assert client.get('/api/me').json()['email_verified'] == 0
         assert len(smtp.messages) == 1
         assert smtp.messages[0]['to'] == ['person@example.com']
@@ -84,6 +94,7 @@ def test_unconfirmed_addresses_get_in_app_alerts_but_no_email(client, monkeypatc
     with SmtpFixture() as smtp:
         use_relay(monkeypatch, smtp)
         register(client)
+        sign_in(client)
         client.post('/api/locations', json={'name': 'Home', 'lat': 10.0, 'lon': 76.0, 'radius': 50, 'min_severity': 'High', 'email_enabled': True})
         with connect() as db:
             ingest(db, record(external_id='evt-unconfirmed'))
@@ -101,11 +112,17 @@ def test_unconfirmed_addresses_get_in_app_alerts_but_no_email(client, monkeypatc
 
 
 def test_registration_survives_a_missing_mail_provider(client):
-    """No SMTP is configured: the account exists, but delivery is never claimed."""
+    """No SMTP is configured: the account exists, but delivery is never claimed.
+
+    The response is the same as with a working provider, by design. What an
+    operator needs to know is on `/api/ready` (`checks.email`), not in a public
+    registration answer.
+    """
     response = register(client)
-    assert response.status_code == 201
-    assert response.json()['verification_email'] == 'unavailable'
+    assert response.status_code == 202
+    assert sign_in(client).status_code == 200
     assert client.get('/api/me').json()['email_verified'] == 0
+    assert client.get('/api/ready').json()['checks']['email'] == 'not configured'
 
 
 def test_expired_confirmation_tokens_are_refused(client, monkeypatch):
@@ -141,7 +158,8 @@ def test_verification_resend_never_reveals_whether_an_account_exists(client, mon
         known = client.post('/api/auth/resend-verification', json={'email': 'someone@example.com'})
         assert unknown.status_code == known.status_code == 202
         assert unknown.json() == known.json()
-        # Only the real account got mail: registration plus the resend.
+        # Only the real account got mail: the confirmation from registration, then
+        # the replacement link; the unknown address got none.
         assert [message['to'] for message in smtp.messages] == [['someone@example.com'], ['someone@example.com']]
 
 
@@ -193,6 +211,7 @@ def test_old_recovery_links_stop_working_when_a_new_one_is_issued(client, monkey
 
 def test_sessions_are_listed_without_tokens_and_can_all_be_revoked(client):
     register(client)
+    sign_in(client)
     first = client.get('/api/sessions').json()
     assert len(first) == 1 and first[0]['current'] is True
     assert len(first[0]['id']) == 12
@@ -210,6 +229,7 @@ def test_sessions_are_listed_without_tokens_and_can_all_be_revoked(client):
 
 def test_idle_and_absolute_expiry_end_a_session_and_delete_the_row(client):
     register(client)
+    sign_in(client)
     with connect() as db:
         db.execute('UPDATE sessions SET last_seen_at=?', ((datetime.now(timezone.utc) - timedelta(days=10)).isoformat(),))
     assert client.get('/api/me').status_code == 401
@@ -246,3 +266,147 @@ def test_existing_accounts_are_grandfathered_as_confirmed(tmp_path, monkeypatch)
         ingest(db, record(external_id='evt-grandfathered'))
         qualify_notifications(db)
         assert 'email' in {r[0] for r in db.execute('SELECT channel FROM deliveries')}
+
+
+# --- enumeration regression tests -------------------------------------------
+# The defect: `POST /api/auth/register` answered 409 for an address that already
+# had an account, so anyone could test whether an address was registered, and it
+# also created a session for an address the caller had not proven they own.
+
+
+def probe(client, email, password=PASSWORD):
+    """What an attacker can see: status, body, headers and how long it took."""
+    started = time.perf_counter()
+    response = client.post('/api/auth/register', json={'email': email, 'password': password})
+    return response.status_code, response.json(), dict(response.headers), time.perf_counter() - started
+
+
+def test_registration_never_reveals_whether_an_address_is_known(client):
+    """The 409 leak, pinned: a new and a taken address are indistinguishable."""
+    fresh_status, fresh_body, fresh_headers, _ = probe(client, 'fresh@example.com')
+    with connect() as db:
+        before = tuple(db.execute('SELECT password,email_verified FROM users WHERE email=?', ('fresh@example.com',)).fetchone())
+
+    repeated_status, repeated_body, repeated_headers, _ = probe(client, 'fresh@example.com')
+
+    assert fresh_status == repeated_status == 202
+    assert fresh_body == repeated_body, 'the answer must not depend on whether the address exists'
+    assert 'email_verified' not in fresh_body and 'verification_email' not in fresh_body
+    assert set(fresh_headers) == set(repeated_headers)
+    with connect() as db:
+        after = tuple(db.execute('SELECT password,email_verified FROM users WHERE email=?', ('fresh@example.com',)).fetchone())
+        assert db.execute('SELECT count(*) FROM users').fetchone()[0] == 1
+    # A duplicate sign-up must not modify the account it collided with...
+    assert before == after
+    # ...and must not hand the caller a session for an address they have not proven.
+    assert client.get('/api/me').status_code == 401
+    assert client.get('/api/sessions').status_code == 401
+
+
+def test_duplicate_registration_sends_the_notice_to_the_address_owner(client, monkeypatch):
+    """The information goes to the mailbox owner instead of to the requester."""
+    with SmtpFixture() as smtp:
+        use_relay(monkeypatch, smtp)
+        register(client)
+        assert len(smtp.messages) == 1 and 'Confirm your email address' in smtp.parsed()['Subject']
+
+        response = client.post('/api/auth/register', json={'email': 'person@example.com', 'password': PASSWORD})
+        assert response.status_code == 202
+        assert len(smtp.messages) == 2
+        notice = smtp.parsed(1)
+        assert notice['To'] == 'person@example.com'
+        assert 'existing account' in notice['Subject']
+        body = notice.get_content()
+        assert 'already exists' in body and 'Nothing changed' in body
+        assert 'Forgot your password?' in body
+        # A notice, not a replayable link: no extra token was issued for it.
+        with connect() as db:
+            assert db.execute("SELECT count(*) FROM tokens WHERE kind='verify'").fetchone()[0] == 1
+
+    with connect() as db:
+        assert 'register-duplicate' in {row[0] for row in db.execute('SELECT action FROM audit')}
+
+
+def test_repeated_duplicate_signups_cannot_be_used_to_bomb_a_mailbox(client, monkeypatch):
+    """The identical answer must not become a way to mail a third party repeatedly."""
+    with SmtpFixture() as smtp:
+        use_relay(monkeypatch, smtp)
+        register(client)
+        for _ in range(5):
+            assert client.post('/api/auth/register', json={'email': 'person@example.com', 'password': PASSWORD}).status_code == 202
+        # One confirmation at registration, one notice for the first duplicate.
+        assert len(smtp.messages) == 2
+        with connect() as db:
+            assert db.execute("SELECT count(*) FROM audit WHERE action='register-duplicate'").fetchone()[0] == 5
+            assert db.execute("SELECT count(*) FROM audit WHERE note LIKE '%notice already sent%'").fetchone()[0] == 4
+
+
+def test_recovery_endpoints_tell_the_caller_nothing_without_a_provider(client):
+    """Without SMTP the caller still gets the generic answer, never 'no such account'."""
+    unknown = client.post('/api/auth/forgot', json={'email': 'nobody@example.com'})
+    register(client)
+    known = client.post('/api/auth/forgot', json={'email': 'person@example.com'})
+    assert unknown.status_code == known.status_code == 202
+    assert unknown.json() == known.json()
+    assert client.post('/api/auth/resend-verification', json={'email': 'nobody@example.com'}).json() == known.json()
+
+
+def test_the_answer_completes_before_the_message_is_sent(monkeypatch, tmp_path):
+    """Ordering, not just wording: no address can be probed through latency.
+
+    The mail is queued as a background task, so the response body is complete
+    before the SMTP conversation starts. A synchronous send would make a
+    registered address measurably slower than an unregistered one — the leak this
+    test exists to prevent. `mailer.send` is wrapped (and still called for real),
+    so the ordering below is observed, not assumed.
+    """
+    events = []
+
+    async def recording_app(scope, receive, send):
+        async def recording_send(message):
+            if message['type'] == 'http.response.body' and not message.get('more_body'):
+                events.append('response-complete')
+            await send(message)
+
+        await app(scope, receive, recording_send)
+
+    real_send = mailer.send
+
+    def recording_send_mail(*args, **kwargs):
+        events.append('smtp-started')
+        return real_send(*args, **kwargs)
+
+    monkeypatch.setenv('DATABASE_PATH', str(tmp_path / 'order.db'))
+    monkeypatch.setenv('USGS_ENABLED', 'false')
+    monkeypatch.setenv('APP_ORIGIN', PUBLIC_ORIGIN)
+    monkeypatch.setenv('PUBLIC_BASE_URL', PUBLIC_ORIGIN)
+    limits.clear()
+    with SmtpFixture() as smtp:
+        use_relay(monkeypatch, smtp)
+        monkeypatch.setattr(mailer, 'send', recording_send_mail)
+        with TestClient(recording_app, headers=HEADERS) as client:
+            assert client.post('/api/auth/register', json={'email': 'order-probe@example.com', 'password': PASSWORD}).status_code == 202
+    assert events == ['response-complete', 'smtp-started'], events
+    assert len(smtp.messages) == 1
+
+
+def test_registration_does_the_same_expensive_work_either_way(client, monkeypatch):
+    """scrypt runs on both branches, so the answer cannot be timed.
+
+    A branch that skips the password hash answers ~50 ms faster than one that pays
+    for it, which is by itself a test for "is this address registered?". This was
+    measured against a real server before the branch was equalised.
+    """
+    import backend.app as app_module
+
+    real_hash = app_module.password_hash
+    calls = []
+
+    def counting_hash(password):
+        calls.append(password)
+        return real_hash(password)
+
+    monkeypatch.setattr(app_module, 'password_hash', counting_hash)
+    assert probe(client, 'timing-probe@example.com')[0] == 202      # nothing to hash for
+    assert probe(client, 'timing-probe@example.com')[0] == 202      # duplicate sign-up
+    assert len(calls) == 2, 'both branches must pay the same password-hashing cost'

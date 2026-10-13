@@ -22,8 +22,18 @@ def client(tmp_path, monkeypatch):
         yield c
 
 
-def signup(c, email='person@example.com'):
-    return c.post('/api/auth/register', json={'email': email, 'password': 'Strong-test-password-47'})
+def signup(c, email='person@example.com', password='Strong-test-password-47'):
+    """Register and sign in, the two calls a browser makes.
+
+    Registration deliberately no longer signs the caller in: the answer must be
+    identical for a new and an already-registered address, and a session for an
+    unproven address was part of the enumeration leak
+    (`test_registration_never_reveals_whether_an_address_is_known`).
+    """
+    response = c.post('/api/auth/register', json={'email': email, 'password': password})
+    if response.status_code == 202:
+        c.post('/api/auth/login', json={'email': email, 'password': password})
+    return response
 
 
 def record(**kwargs):
@@ -52,9 +62,12 @@ def test_health_migration_idempotency(client):
 
 def test_registration_login_logout(client):
     response = signup(client)
-    assert response.status_code == 201
-    assert 'httponly' in response.headers['set-cookie'].lower()
-    assert 'samesite=strict' in response.headers['set-cookie'].lower()
+    assert response.status_code == 202
+    # The cookie belongs to the sign-in, not to registration: the same flags the
+    # application documents must survive the split.
+    login = client.post('/api/auth/login', json={'email': 'person@example.com', 'password': 'Strong-test-password-47'})
+    assert 'httponly' in login.headers['set-cookie'].lower()
+    assert 'samesite=strict' in login.headers['set-cookie'].lower()
     assert client.get('/api/me').json()['role'] == 'user'
     assert client.post('/api/auth/logout').status_code == 200
     assert client.get('/api/me').status_code == 401
@@ -68,7 +81,7 @@ def test_password_hashing():
 
 def test_bad_login_and_duplicate(client):
     signup(client)
-    assert signup(client).status_code == 409
+    assert signup(client).status_code == 202
     assert client.post('/api/auth/login', json={'email':'missing@example.com','password':'invalid-long-password'}).status_code == 401
 
 

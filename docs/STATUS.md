@@ -29,9 +29,10 @@ verified there is marked as not claimed.
 | `ca40277` | **Account security**: email confirmation, single-use expiring recovery links, session listing, revoke-all, idle expiry, 12 new tests and the matching UI (banner, resend, forgot/reset, sign-out-everywhere, session list) |
 | `31cdd1b` | **Email channel proven in every transport mode** (implicit TLS added, cancellation gates, 5 new tests) and **`deploy/verify-live.sh`**, the release gate that CI now runs against a live server on every push |
 | `41ce4dc` | Docs reconciled with the owner's decisions (Oracle Cloud Always Free, provider SMTP in the host environment file) and the new evidence |
-| (this commit) | **Retention enforced**: `backend/retention.py`, worker daily purge, `cli retention [--dry-run]`, 5 tests |
+| `abf22fc` | **Retention enforced**: `backend/retention.py`, worker daily purge, `cli retention [--dry-run]`, 5 tests |
+| (this commit) | **Registration enumeration fixed**: one `202` answer for every address, no session from registration, notice to the address owner (hourly cooldown, audited), password hash before the branch, mail queued after the reply; 6 new regression tests |
 
-Test suite: **99 passed** (`python -m pytest -q`). Browser smokes: full-stack (including the
+Test suite: **105 passed** (`python -m pytest -q`). Browser smokes: full-stack (including the
 confirmation banner and recovery entry point) and static-preview both pass locally and in CI.
 
 ## Waiting on the owner
@@ -63,8 +64,9 @@ Ordered by risk closed per unit of effort, from `docs/AUDIT.md` §9:
    delivery replay — each audited.
 5. Frontend: incident routes, editable saved locations, place search, map
    clustering, accessibility and keyboard-navigation tests.
-6. Remove the registration enumeration leak (answer 201 and email the existing
-   holder instead of 409) once the product copy is updated.
+6. ~~Remove the registration enumeration leak~~ — done (this commit); the
+   remaining hardening idea is a CAPTCHA-free proof-of-work or provider-level
+   throttle for the registration endpoint if abuse appears.
 
 ## Explicitly not claimed
 

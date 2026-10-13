@@ -147,8 +147,11 @@ reach a log line, an API response or the `deliveries.last_error` column.
   origin or the emailed links will point at the wrong host.
 * Emailed links never contain a password, and token values exist only in the
   email and are stored as hashes. Logs never contain tokens or credentials.
-* Known limitation: registration replies 409 for an address that already has an
-  account, so address existence is testable — see `docs/ARCHITECTURE.md`.
+* Registration answers `202` with the same body for a new and an already
+  registered address, and no longer signs the caller in: address existence is no
+  longer testable from the API, and the address holder is notified instead (once
+  an hour per address, with an audit line for every duplicate attempt). The
+  requester must sign in explicitly. See `docs/ARCHITECTURE.md`.
 
 ## Privacy, retention and backups
 Minimize collection: email, scrypt password, explicit saved coordinates, consent and delivery history. No background GPS. Private tables are user-scoped. Admin report/audit inspection is privileged. Account deletion removes sessions, locations, notifications and delivery rows; reports lose user linkage/raw payload identifiers. Public report text itself is retained, so warn users not to put personal information there. A moderation/removal process for sensitive report text remains necessary.

@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import os
 import secrets
@@ -10,11 +11,11 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Depends, HTTPException, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from .db import HEARTBEAT_KEY, connect, get_runtime_state, migrate, now
+from .db import HEARTBEAT_KEY, connect, get_runtime_state, migrate, now, set_runtime_state
 from .security import SESSION_DAYS, current_user, admin_user, password_hash, password_ok, session_hash
 from .engine import CATEGORIES, GUIDANCE, LEVELS, VERIFICATIONS, ingest, qualify_notifications
 from .poller import source_rows, source_state_summary
@@ -138,6 +139,11 @@ def create_session(db, response, user_id):
     )
 
 
+def public_base():
+    """Public origin of this deployment, for links inside email."""
+    return (os.getenv('PUBLIC_BASE_URL') or os.getenv('APP_ORIGIN') or 'http://localhost:5173').rstrip('/')
+
+
 def account_link(kind, token):
     """Absolute link for an emailed token; the browser page redeems it."""
     base = (os.getenv('PUBLIC_BASE_URL') or os.getenv('APP_ORIGIN') or 'http://localhost:5173').rstrip('/')
@@ -162,6 +168,43 @@ def generic_reply():
     return {'ok': True, 'message': 'If that address has an account, a message has been sent to it.'}
 
 
+def deliver_account_notice(recipient, url):
+    """Tell the holder of an existing address that a second sign-up used it.
+
+    Never raises, and never tells the caller anything: it runs after the response
+    has been sent, so a duplicate sign-up is indistinguishable from a new one
+    both in its body and in how long it takes.
+    """
+    try:
+        mailer.send_account_notice(recipient, url)
+    except Exception:
+        logging.getLogger('disaster-assistant').warning('account notice not delivered: reason=unavailable')
+        return 'unavailable'
+    return 'sent'
+
+
+def notice_key(email):
+    """Runtime-state key for the per-address notice cooldown (no address stored)."""
+    return 'account_notice:' + hashlib.sha256(email.encode()).hexdigest()[:16]
+
+
+def notice_recently_sent(db, email, hours=1):
+    """True when this address already received a notice inside the cooldown.
+
+    Without it, anyone could use the (necessarily identical) registration answer
+    as a way to make the operator's mail provider post repeated mail to a third
+    party: a 10/minute rate limit per client is not enough on its own.
+    """
+    state = get_runtime_state(notice_key(email), db=db)
+    if not state:
+        return False
+    try:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(state[1])).total_seconds()
+    except ValueError:
+        return False
+    return age < hours * 3600
+
+
 @app.get('/api/health')
 def health():
     with connect() as db:
@@ -169,20 +212,57 @@ def health():
     return {'status': 'ok', 'version': '0.1.0'}
 
 
-@app.post('/api/auth/register', status_code=201)
-def register(data: Credentials, response: Response):
+@app.post('/api/auth/register', status_code=202)
+def register(data: Credentials, background: BackgroundTasks):
+    """Start an account. The answer never depends on whether the address exists.
+
+    Both branches return 202 with the same body and the same shape of work: a new
+    address gets a confirmation link, an existing one gets a sign-in notice to its
+    owner, and the mail is sent after the response, so neither the body nor the
+    response time can be used to test whether an address is registered.
+
+    Registration does not sign the caller in. That was the other half of the leak
+    (`docs/ARCHITECTURE.md`): a session was created for an address the caller had
+    not proven they own. The client signs in with the password it just supplied.
+    """
     email = str(data.email).lower()
+    # Hash before branching. scrypt costs tens of milliseconds, so a branch that
+    # skipped it would answer measurably faster than one that did - a timing test
+    # for "is this address registered?" that would defeat the whole point. Both
+    # paths pay the same cost; the duplicate's result is discarded.
+    candidate = password_hash(data.password)
+    existing = False
+    throttled = False
     with connect() as db:
-        try:
-            cursor = db.execute('INSERT INTO users(email,password,created_at) VALUES (?,?,?)', (email, password_hash(data.password), now()))
-        except sqlite3.IntegrityError:
-            raise HTTPException(409, 'Unable to register with these details')
-        user_id = cursor.lastrowid
-        create_session(db, response, user_id)
-        db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user_id, 'register', 'Account created; email awaiting confirmation', now()))
-        token = issue_token(db, user_id, 'verify')
-    delivery = deliver_token_email('verify', email, token)
-    return {'ok': True, 'email_verified': False, 'verification_email': delivery}
+        row = db.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        if row:
+            existing = True
+            throttled = notice_recently_sent(db, email)
+            if not throttled:
+                set_runtime_state(db, notice_key(email), {'kind': 'duplicate-signup-notice'})
+            # Worth an audit line: a repeated sign-up attempt is exactly the signal
+            # an operator wants when an address is being targeted.
+            db.execute(
+                'INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)',
+                (None, 'register-duplicate',
+                 'Sign-up refused for an existing address; the holder was notified' if not throttled
+                 else 'Sign-up refused for an existing address; notice already sent inside the cooldown', now()),
+            )
+        else:
+            cursor = db.execute('INSERT INTO users(email,password,created_at) VALUES (?,?,?)', (email, candidate, now()))
+            user_id = cursor.lastrowid
+            db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user_id, 'register', 'Account created; email awaiting confirmation', now()))
+            token = issue_token(db, user_id, 'verify')
+    if existing:
+        if not throttled:
+            background.add_task(deliver_account_notice, email, public_base())
+    else:
+        background.add_task(deliver_token_email, 'verify', email, token)
+    return {
+        'ok': True,
+        'message': 'If that address can receive mail, a message is on its way to it. '
+                   'Sign in with your password to continue.',
+    }
 
 
 @app.post('/api/auth/verify')
@@ -199,28 +279,34 @@ def verify_email(data: TokenOnly):
 
 
 @app.post('/api/auth/resend-verification', status_code=202)
-def resend_verification(data: EmailOnly):
-    """Re-issue a confirmation link. The answer never reveals whether the account exists."""
+def resend_verification(data: EmailOnly, background: BackgroundTasks):
+    """Re-issue a confirmation link. The answer never reveals whether the account exists.
+
+    The send happens after the response. Sending inside the request would answer
+    "account exists" through latency alone, for the same reason `forgot` must not.
+    """
     email = str(data.email).lower()
+    token = None
     with connect() as db:
         row = db.execute('SELECT id,email_verified FROM users WHERE email=?', (email,)).fetchone()
         if row and not row['email_verified']:
             token = issue_token(db, row['id'], 'verify')
-    if row and not row['email_verified']:
-        deliver_token_email('verify', email, token)
+    if token:
+        background.add_task(deliver_token_email, 'verify', email, token)
     return generic_reply()
 
 
 @app.post('/api/auth/forgot', status_code=202)
-def forgot_password(data: EmailOnly):
+def forgot_password(data: EmailOnly, background: BackgroundTasks):
     """Start password recovery. Always the same answer, so accounts cannot be enumerated."""
     email = str(data.email).lower()
+    token = None
     with connect() as db:
         row = db.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
         if row:
             token = issue_token(db, row['id'], 'reset')
-    if row:
-        deliver_token_email('reset', email, token)
+    if token:
+        background.add_task(deliver_token_email, 'reset', email, token)
     return generic_reply()
 
 

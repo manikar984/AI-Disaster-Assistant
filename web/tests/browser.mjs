@@ -32,6 +32,14 @@ try {
   await page.getByLabel('Email address').fill(account);
   await page.getByLabel('Password', { exact: true }).fill('Browser-test-password-47');
   await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  // Registration answers identically for a new and an existing address and no
+  // longer starts a session, so the dialog hands the user back to sign in. The
+  // account it just created is real: signing in with that password must work.
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('heading', { name: 'Welcome back' }).waitFor();
+  await dialog.getByLabel('Email address').fill(account);
+  await dialog.getByLabel('Password', { exact: true }).fill('Browser-test-password-47');
+  await dialog.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('button', { name: 'My account', exact: true }).waitFor();
   // A new account starts unconfirmed: the dashboard must say so and offer the resend.
   await page.getByRole('status').filter({ hasText: 'Confirm your email address' }).waitFor();

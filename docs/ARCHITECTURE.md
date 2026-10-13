@@ -5,7 +5,7 @@ Browser → same-origin React/FastAPI → SQLite WAL. A separate, single worker 
 SQLite reduces deployment complexity for a **single-node pilot**, not horizontally scaled production. Versioned SQL migrations run at startup. PostgreSQL/PostGIS migration, shared rate limits and queue locking are required before multiple API/worker replicas. This is deliberately a reliable smaller system instead of disconnected integration stubs.
 
 ## Contracts
-See `/docs` for generated OpenAPI. Public GET `/api/incidents` supports mode, severity, type and search; GET `/api/incidents/{id}` returns evidence and timeline. Frontend polls every 15 seconds; no streaming claim. `/api/sources` exposes actual feed health. Cookie sessions guard `/api/me`, `/api/locations`, `/api/notifications`, `/api/reports`; admin role guards `/api/admin/*`. Mutations require same-origin Origin or absent Origin for non-browser clients. JSON-only body validation prevents form CSRF; logout/deletion additionally require a custom header. Cookies are HTTP-only, SameSite=strict; secure flag on production. Sessions are opaque random tokens stored hashed, expire in 7 days, and are revoked on logout/deletion. Passwords use scrypt with random salts. Recovery requires operator-assisted reset for now; no fake recovery email flow.
+See `/docs` for generated OpenAPI. Public GET `/api/incidents` supports mode, severity, type and search; GET `/api/incidents/{id}` returns evidence and timeline. Frontend polls every 15 seconds; no streaming claim. `/api/sources` exposes actual feed health. Cookie sessions guard `/api/me`, `/api/locations`, `/api/notifications`, `/api/reports`; admin role guards `/api/admin/*`. Mutations require same-origin Origin or absent Origin for non-browser clients. JSON-only body validation prevents form CSRF; logout/deletion additionally require a custom header. Cookies are HTTP-only, SameSite=strict; secure flag on production. Sessions are opaque random tokens stored hashed, expire in 7 days, and are revoked on logout/deletion. Passwords use scrypt with random salts. Recovery is self-service through single-use emailed links; the operator command `reset-password` remains for locked-out accounts. `POST /api/auth/register` answers `202` with a constant body and never issues a session: see the enumeration table below.
 
 ## Data model
 `users`, `sessions`, `locations` (coordinate, radius, severity and explicit email consent), `sources`, `ingestion_runs`, `reports` (source identity, original ID, timestamps, raw payload, provenance, text, coordinates), `incidents`, `incident_reports`, `timeline`, `notifications`, `deliveries`, `audit`. Foreign keys cascade private account data. Public reports are anonymized when an account is deleted. Unique constraints provide source-record and per-user/incident/version/channel suppression. Retention is enforced by `backend/retention.py` on the schedule the worker drives: raw source payloads and ingestion runs 30 days, notification/delivery history 90 days, inactive never-corroborated incidents 90 days, security and admin audit 365 days. Sample rows, corroborated/officially confirmed incidents, user accounts and recent audit entries are never purged, and a backup taken before a purge still contains what was purged until it expires.
@@ -30,9 +30,22 @@ Single API process + single worker + persistent local volume, behind HTTPS rever
 | Token storage | Only SHA-256 hashes of tokens are stored. Issuing a new token of a kind invalidates the previous one. Expired tokens are pruned opportunistically. |
 | Rate limiting | `/api/auth/*` is limited to 10 requests/minute per client in-process; the reverse proxy must add real per-client limits (see the runbook). |
 
-**Known limitation (documented, not hidden).** `POST /api/auth/register` answers
-409 when an address already has an account, which lets a caller test whether an
-address is registered. Removing that leak means answering 201 and emailing the
-existing account holder instead; it is deliberately deferred because the current
-behaviour is asserted by existing tests and product copy, and the exposure is
-limited to address existence.
+**Account enumeration (fixed, with the reasoning kept).** `POST /api/auth/register`
+used to answer 409 for an address that already had an account and to create a
+session for it, so anyone could test whether an address was registered — and a
+session created that way belonged to an account the caller had not proven they
+own. Both halves are gone:
+
+| Property | How it is enforced |
+|---|---|
+| One answer for every address | `202` with the same body, the same headers and no session, whether the address is new or already registered |
+| Equal cost | the password hash runs **before** the branch (scrypt, tens of milliseconds) and the reply is sent **before** the mail is queued, so neither end-to-end latency nor SMTP time distinguishes the two cases |
+| The information goes to the owner | an existing address gets a "this address already has an account" notice to its mailbox, which the requester cannot read; the notice issues no token |
+| No mailbox bombing | the notice is sent at most once an hour per address (`runtime_state` marker keyed by an address hash), and every duplicate attempt is audited (`register-duplicate`) |
+| Correct sign-in preserved | the client signs in with the password it just supplied; `login` still answers one `401` for an unknown address and a wrong password, after doing equivalent hashing work |
+
+Registration therefore no longer starts a session; the frontend opens the sign-in
+form when the call returns. The same treatment applies to
+`POST /api/auth/forgot` and `POST /api/auth/resend-verification`, which now queue
+their mail after the reply for the same reason. Regression tests (including the
+response-ordering test) are in `tests/test_auth.py`.

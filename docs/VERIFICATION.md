@@ -1,5 +1,26 @@
 # Verification record
 
+## 2026-10-13 — registration enumeration: removed, and measured
+
+| Check | Actual result |
+|---|---|
+| `pytest -q` | **105 passed**, 1 third-party deprecation warning |
+| `pytest tests/test_auth.py -q` | 18 passed (6 new regression tests) |
+| Live probe against a running server (new address vs existing address) | identical `202` and identical body: `{"ok": true, "message": "If that address can receive mail, a message is on its way to it. Sign in with your password to continue."}`; identical header set; **no `Set-Cookie`** either way |
+| Response time, before the fix | new address median 50–68 ms, **existing address 8.9 ms** — the duplicate path skipped the password hash, so existence was testable through latency alone |
+| Response time, after the fix (8 probes each, 10/min limit respected) | never registered: median **50.2 ms** (48.3–54.3); already exists: median **52.6 ms** (49.1–63.9); **ratio 1.05** |
+| Behaviour on a duplicate sign-up | the existing account is untouched (password hash and `email_verified` unchanged, still one user row), the caller gets no session (`/api/me` and `/api/sessions` are `401`), an audit row `register-duplicate` is written, and the address owner receives the notice instead |
+| Mailbox-bombing guard | 5 duplicate sign-ups produced 1 notice and 4 suppressed attempts (`notice already sent inside the cooldown`); registration plus first duplicate = 2 messages total |
+| Ordering (the timing defence, asserted in a test) | the response body completes **before** the SMTP conversation starts: `events == ['response-complete', 'smtp-started']` — `mailer.send` was wrapped, and still called for real |
+| Frontend | registration returns to the sign-in form (no session), and the browser smoke test signs in with the password it just registered — passed |
+| Browser smoke (full stack) | passed, including the new register→sign-in checkpoint |
+| Static preview smoke | passed |
+
+Not covered here: whether a provider's spam filter treats the notice email like
+any other transactional message (that needs the SMTP credentials on the host),
+and there is no CAPTCHA — the endpoint is rate-limited per client (10/min) and
+the notice has its own per-address cooldown.
+
 ## 2026-10-13 — retention enforcement
 
 | Check | Actual result |

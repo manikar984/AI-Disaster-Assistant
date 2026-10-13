@@ -31,6 +31,7 @@ ALERT_SUBJECT = 'Disaster Assistant — incident update (not a government warnin
 TEST_SUBJECT = 'Disaster Assistant — SMTP verification message (not a government warning)'
 VERIFY_SUBJECT = 'Confirm your email address for disaster alerts'
 RECOVERY_SUBJECT = 'Reset your disaster-assistant password'
+NOTICE_SUBJECT = 'Disaster Assistant — sign-up notice for an existing account'
 
 
 class MailError(RuntimeError):
@@ -174,6 +175,26 @@ def send_account_verification(recipient, url):
         'local authorities.\n'
     )
     return send(build_message(recipient, VERIFY_SUBJECT, body, message_id='<account-verify@disaster-assistant.local>'))
+
+
+def send_account_notice(recipient, url):
+    """Tell an existing account holder that a second sign-up used their address.
+
+    This is what replaces the registration endpoint saying "that address is taken":
+    the answer the requester sees is identical for a new and an existing address,
+    and only the owner of the mailbox learns which of the two happened. The
+    requester cannot read this message, so nothing is disclosed by it.
+    """
+    body = (
+        'A sign-up request was made with this address, and an account already exists for it.\n\n'
+        'Nothing changed: the password, saved locations and notification settings on that account\n'
+        f'are untouched. Sign in here with the existing password:\n{url}\n\n'
+        'If you have forgotten the password, use the "Forgot your password?" link on that page.\n\n'
+        'If you did not ask for this, no action is needed: the duplicate request was refused and\n'
+        'no data was modified. This message is sent at most once an hour per address.\n\n'
+        'Disaster Assistant is not an official emergency warning service.\n'
+    )
+    return send(build_message(recipient, NOTICE_SUBJECT, body, message_id='<account-notice@disaster-assistant.local>'))
 
 
 def send_password_recovery(recipient, url):
