@@ -19,7 +19,7 @@ from .db import HEARTBEAT_KEY, connect, get_runtime_state, migrate, now, set_run
 from .security import SESSION_DAYS, current_user, admin_user, password_hash, password_ok, session_hash
 from .engine import CATEGORIES, GUIDANCE, LEVELS, VERIFICATIONS, ingest, qualify_notifications
 from .poller import source_rows, source_state_summary
-from . import mailer
+from . import mailer, security_headers
 from .tokens import consume as consume_token, issue as issue_token
 from .verification import RULE as CORROBORATION_RULE, assess as assess_evidence
 
@@ -203,6 +203,20 @@ def notice_recently_sent(db, email, hours=1):
     except ValueError:
         return False
     return age < hours * 3600
+
+
+@app.middleware('http')
+async def secure_headers(request: Request, call_next):
+    """Attach the security headers to every response this application returns.
+
+    Declared *after* `boundary` on purpose: Starlette inserts each new middleware
+    at the front of the stack, so the last one declared is the outermost. The
+    early 403/413/429 responses that `boundary` returns without calling the route
+    therefore still pass through here and carry the headers — a test pins that,
+    because the ordering is easy to get wrong (and was, until it was measured).
+    See `backend/security_headers.py` for the policy and its exceptions.
+    """
+    return security_headers.apply(await call_next(request))
 
 
 @app.get('/api/health')

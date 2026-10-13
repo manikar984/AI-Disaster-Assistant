@@ -2,7 +2,7 @@
 // Requires a built frontend served by the FastAPI application on a disposable
 // database (see .github/scripts/browser-smoke.sh). External feeds stay disabled.
 import assert from 'node:assert/strict';
-import { launchBrowser, instrumentPage, reportFailure, checkpoint, layoutSnapshot, waitForRowCount } from './browser-helpers.mjs';
+import { launchBrowser, instrumentPage, reportFailure, checkpoint, layoutSnapshot, waitForRowCount, cspViolations } from './browser-helpers.mjs';
 
 const { browser, channel } = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
@@ -89,7 +89,16 @@ try {
   const layout = await layoutSnapshot(page);
   assert.equal(layout.scroll_width <= layout.viewport_width, true, `Mobile horizontal overflow: ${JSON.stringify(layout)}`);
   assert.deepEqual(evidence.pageErrors, [], 'No browser exceptions');
-  console.log(`PASS (${channel}): desktop feed, map, filters, evidence, authentication, saved location, public report, account deletion, mobile navigation, no horizontal overflow, no browser exceptions.`);
+  // The whole journey ran under the deployment's Content-Security-Policy: if the
+  // policy blocks anything the app needs, it shows up here rather than as a
+  // mysteriously missing control.
+  checkpoint('content security policy');
+  const violations = await cspViolations(page);
+  assert.deepEqual(violations, [], `Content-Security-Policy was violated: ${violations.join('; ')}`);
+  const declared = await page.evaluate(() => document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content || '');
+  console.log(`[smoke] CSP enforced by response headers; page-declared meta policy: ${declared || '(none, as intended)'}`);
+
+  console.log(`PASS (${channel}): desktop feed, map, filters, evidence, authentication, saved location, public report, account deletion, mobile navigation, no horizontal overflow, no CSP violations, no browser exceptions.`);
 } catch (error) {
   await reportFailure({ channel }, page, evidence, error, { layout: JSON.stringify(await layoutSnapshot(page)) });
   throw error;

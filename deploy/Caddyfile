@@ -21,9 +21,14 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		Referrer-Policy "strict-origin-when-cross-origin"
-		# The site is never meant to be framed. A full script-src policy still needs
-		# work because the map loads tiles from a third-party host (see docs/AUDIT.md).
-		Content-Security-Policy "frame-ancestors 'none'"
+		Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=(), usb=(), magnetometer=(), gyroscope=()"
+		Cross-Origin-Resource-Policy "same-origin"
+		X-Frame-Options "DENY"
+		# Exactly the policy in backend/security_headers.py (tests/test_headers.py
+		# compares the two strings byte for byte). It is repeated here because the
+		# proxy also covers responses the application never produces, such as an
+		# unhandled-exception 500 from Starlette's outermost error middleware.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 		-Server
 	}
 

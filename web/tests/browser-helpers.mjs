@@ -84,6 +84,15 @@ export async function launchBrowser() {
 /** Collect browser-side evidence so a failure is diagnosable from logs alone. */
 export function instrumentPage(page) {
   const evidence = { pageErrors: [], consoleErrors: [], failedRequests: [] };
+  // Content-Security-Policy violations are recorded on the page itself: a
+  // violation is how a strict policy breaks a feature, and the smoke test must
+  // notice that (it would otherwise look like a missing element).
+  page.addInitScript(() => {
+    window.__cspViolations = [];
+    document.addEventListener('securitypolicyviolation', (event) => {
+      window.__cspViolations.push(`${event.violatedDirective} blocked ${event.blockedURI || '(inline)'}`);
+    });
+  });
   page.on('pageerror', (error) => evidence.pageErrors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error') evidence.consoleErrors.push(`${message.text()} @ ${message.location().url}`);
@@ -127,6 +136,16 @@ export async function waitForRowCount(page, expected) {
   } catch (error) {
     const actual = await page.locator('.incident-row').count();
     throw new Error(`Incident feed did not settle at ${expected} row(s); saw ${actual}. ${String(error.message).split('\n')[0]}`);
+  }
+}
+
+/** The CSP violations the page recorded, deduplicated and sorted. */
+export async function cspViolations(page) {
+  try {
+    const found = await page.evaluate(() => window.__cspViolations || []);
+    return [...new Set(found)].sort();
+  } catch (error) {
+    return [`unavailable (${error.message.split('\n')[0]})`];
   }
 }
 
