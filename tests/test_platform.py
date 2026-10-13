@@ -1,9 +1,11 @@
 import os
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from backend.app import app, limits
 from backend.db import connect, migrate, now
+from backend import db as backend_db
 from backend.engine import classify, distance, ingest, qualify_notifications
 from backend.security import password_hash, password_ok
 from backend.worker import normalize_usgs, poll_usgs, deliver_email
@@ -286,3 +288,34 @@ def test_successful_feed_skips_malformed(client,monkeypatch):
         assert db.execute('SELECT count(*) FROM incidents').fetchone()[0]==1
         assert db.execute('SELECT errors FROM ingestion_runs').fetchone()[0]==1
         assert db.execute('SELECT status FROM sources').fetchone()[0]=='degraded'
+
+
+def test_legacy_rows_without_coordinates_are_corrected_on_upgrade(tmp_path, monkeypatch):
+    """A database created before the precision column must not keep claiming 'point'."""
+    monkeypatch.setenv('DATABASE_PATH', str(tmp_path/'legacy.db'))
+    monkeypatch.setenv('USGS_ENABLED', 'false')
+    migrations = Path(backend_db.__file__).with_name('migrations')
+    with connect() as db:
+        db.executescript((migrations/'001_initial.sql').read_text())
+        # A pre-M4 database records exactly this: schema 001 applied, nothing else.
+        db.execute('CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY)')
+        db.execute("INSERT INTO migrations VALUES ('001_initial.sql')")
+        db.execute("INSERT INTO incidents(type,location,lat,lon,severity,verification,confidence,mode,summary,first_detected,last_updated,published_at) VALUES ('Earthquake','Unknown',NULL,NULL,'Medium','Unverified','Limited evidence','live','legacy row',?,?,?)", (now(), now(), now()))
+        db.execute("INSERT INTO reports(source,external_id,text,location,lat,lon,published_at,collected_at,mode,official,raw) VALUES ('USGS','legacy-1','legacy text','Unknown',NULL,NULL,?,?,'live',1,'{}')", (now(), now()))
+    migrate()
+    with connect() as db:
+        assert db.execute('SELECT geo_precision FROM incidents').fetchone()['geo_precision'] == 'unknown'
+        assert db.execute('SELECT geo_precision FROM reports').fetchone()['geo_precision'] == 'unknown'
+
+
+def test_incident_api_never_claims_precision_without_coordinates(client):
+    """A stored 'point' with no coordinates must be reported as unknown, not as a place."""
+    with connect() as db:
+        incident_id = ingest(db, record(lat=None, lon=None, external_id='no-coords'))
+        db.execute("UPDATE incidents SET geo_precision='point' WHERE id=?", (incident_id,))
+        db.execute("UPDATE reports SET geo_precision='point' WHERE external_id='no-coords'")
+    listed = client.get('/api/incidents').json()
+    assert [row['geo_precision'] for row in listed] == ['unknown']
+    detail = client.get(f'/api/incidents/{incident_id}').json()
+    assert detail['geo_precision'] == 'unknown'
+    assert detail['reports'][0]['geo_precision'] == 'unknown'

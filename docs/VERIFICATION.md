@@ -1,5 +1,57 @@
 # Verification record
 
+## 2026-10-13 — Milestone 4: real ingestion breadth
+
+Environment unchanged (Python 3.11.2, no Docker, egress limited to package and
+GitHub hosts — so no external feed can be fetched from here).
+
+| Check | Command | Actual result |
+|---|---|---|
+| Backend suite | `python -m pytest -q` | **58 passed** (was 43), 1 Starlette deprecation warning |
+| Source adapter suite | `python -m pytest tests/test_sources.py -q` | 13 passed against a local HTTP fixture server |
+| Frontend build | `npm run build --prefix web` | Passed (`index-CZULmvXn.js` 482.87 kB / `index-DmpLt5Or.css` 40.20 kB) |
+| Full-stack browser smoke | `bash .github/scripts/browser-smoke.sh` | Passed (desktop feed, map, filters, evidence, auth, saved location, report, deletion, mobile nav, no overflow, no page errors) |
+| Static-preview browser smoke | `npm run test:static --prefix web` | Passed (discloses the missing backend, shows no incidents, blocks misleading actions) |
+| CLI source registry | `python -m backend.cli sources` | 4 adapters listed (`cap`, `gdacs`, `news-rss`, `usgs`), all `disabled`, each with its enable hints |
+| CLI sample loader | `python -m backend.cli sample` | 5 historical incidents loaded, `mode=sample`, no notifications created |
+| CLI poll with nothing enabled | `python -m backend.cli poll` | Exit status 1 with guidance, no data invented |
+| Live pilot endpoints | `curl /api/health /api/ready /api/sources /api/policy` | `ready` reports `degraded` — `no live source is enabled`; `worker: alive`, heartbeat age 0 s; 4 sources all `disabled`; policy exposes categories (incl. Volcano), severity mapping, corroboration rule and notification gates |
+| CI “Checks” | runs [38437227181](https://github.com/manikar984/AI-Disaster-Assistant/actions/runs/38437227181), [38437236199](https://github.com/manikar984/AI-Disaster-Assistant/actions/runs/38437236199) | All steps pass |
+
+What the new adapter tests actually exercise (all over real HTTP against a local
+fixture server, never mocked functions): USGS 3 records fetched → 2 inserted /
+1 rejected with `degraded` health; idempotent repoll; magnitude revision → new
+version + Critical; GDACS red cyclone → Storm/Critical/`Officially Confirmed`
+while a non-official URL in the feed is dropped and the record rejected; three
+news feeds with one syndicated duplicate → 2 inserted / 1 skipped, never
+official, no coordinates claimed; CAP `Severe`+`Likely` → `Officially Confirmed`
+and `Moderate`+`Possible` → `Developing`, both stored with
+`geo_precision='alert-area-centre'`; malformed feed → `status='error'` with zero
+incidents and no fallback data.
+
+### Defect found and fixed while verifying the live pilot
+
+The pilot database (created before `geo_precision` existed) reported
+`geo_precision='point'` for sample rows with **no coordinates at all**, because
+`ALTER TABLE … DEFAULT 'point'` backfilled them. Two fixes, both tested:
+
+* `backend/migrations/003_geo_precision_backfill.sql` corrects stored rows
+  (`point` → `unknown` where `lat`/`lon` are null);
+* `app.py` applies the same guard when serving incidents and their reports, so a
+  coordinate-less record can never be presented as a surveyed position.
+* Tests: `test_legacy_rows_without_coordinates_are_corrected_on_upgrade`
+  (upgrades a database that has only migration 001 applied, the real legacy
+  shape) and `test_incident_api_never_claims_precision_without_coordinates`.
+
+### Still unverified after this milestone
+
+* Live fetch from USGS, GDACS, a news feed or a CAP feed: outbound access to
+  those hosts is blocked here, so the parsers are verified against fixtures only.
+  Each source must be enabled and polled once on the deployed host.
+* Real SMTP delivery: no credentials and no egress; see the deployment plan.
+* Docker Compose build (no Docker daemon) and any public HTTPS deployment
+  (no cloud account is created without the owner's approval).
+
 ## 2026-10-13 — audit fixes on `arena/0aaecd40-ai-disaster-assistant`
 
 Environment: Python 3.11.2, Node 22.22.3, npm 10.9.8, no Docker, outbound

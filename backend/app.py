@@ -192,6 +192,19 @@ def remove_location(location_id: int, user=Depends(current_user)):
     return {'ok': True}
 
 
+def _with_precision(row):
+    """Never let a coordinate-less record claim a precise geographic position.
+
+    Rows written before the geo_precision column existed carry the column default;
+    they are corrected in migration 003 and guarded here so an API response can
+    never label a place we do not actually have coordinates for.
+    """
+    item = dict(row)
+    if item.get('lat') is None or item.get('lon') is None:
+        item['geo_precision'] = 'unknown'
+    return item
+
+
 @app.get('/api/incidents')
 def incidents(mode: Literal['live', 'sample', 'all'] = 'live', severity: str = '', type: str = '', q: str = ''):
     where, params = [], []
@@ -206,7 +219,7 @@ def incidents(mode: Literal['live', 'sample', 'all'] = 'live', severity: str = '
         params.extend(['%'+q[:150]+'%']*2)
     sql = 'SELECT i.*, (SELECT count(DISTINCT r.source) FROM incident_reports ir JOIN reports r ON r.id=ir.report_id WHERE ir.incident_id=i.id) source_count FROM incidents i'
     with connect() as db:
-        return [dict(r) for r in db.execute(sql + (' WHERE '+' AND '.join(where) if where else '')+' ORDER BY i.last_updated DESC LIMIT 200', params)]
+        return [_with_precision(r) for r in db.execute(sql + (' WHERE '+' AND '.join(where) if where else '')+' ORDER BY i.last_updated DESC LIMIT 200', params)]
 
 
 @app.get('/api/incidents/{incident_id}')
@@ -215,8 +228,8 @@ def incident(incident_id: int):
         row = db.execute('SELECT * FROM incidents WHERE id=?', (incident_id,)).fetchone()
         if not row:
             raise HTTPException(404, 'Incident not found')
-        result = dict(row)
-        result['reports'] = [dict(r) for r in db.execute('SELECT r.id,r.source,r.url,r.text,r.published_at,r.collected_at,r.mode,r.official,r.geo_precision FROM reports r JOIN incident_reports ir ON ir.report_id=r.id WHERE ir.incident_id=?', (incident_id,))]
+        result = _with_precision(row)
+        result['reports'] = [_with_precision(r) for r in db.execute('SELECT r.id,r.source,r.url,r.text,r.published_at,r.collected_at,r.mode,r.official,r.lat,r.lon,r.geo_precision FROM reports r JOIN incident_reports ir ON ir.report_id=r.id WHERE ir.incident_id=?', (incident_id,))]
         independent, reason, domains = assess_evidence(db, incident_id)
         result['evidence'] = {'independent': independent, 'reason': reason, 'domains': domains, 'rule': CORROBORATION_RULE}
         result['timeline'] = [dict(r) for r in db.execute('SELECT created_at,status,note FROM timeline WHERE incident_id=? ORDER BY id DESC', (incident_id,))]
