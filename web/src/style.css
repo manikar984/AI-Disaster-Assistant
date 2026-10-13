@@ -10,3 +10,9 @@
 .demo-banner a{display:inline-flex;align-items:center;gap:6px;color:#6d5a33;text-decoration:underline}
 .demo-banner button{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:10px;font-weight:600;color:#7a6437;white-space:nowrap}
 @media(max-width:760px){.demo-banner{flex-wrap:wrap;padding:12px}.demo-banner button{margin-left:0}}
+.readiness-row{display:flex;flex-wrap:wrap;align-items:center;gap:16px;font-size:11px;color:#7d8e77;border:1px solid #e2e8df;background:#fafbf8;border-radius:6px;padding:12px 15px;margin:18px 0}
+.readiness-row strong{color:#4c6350;font-weight:600}
+.policy-list{margin:12px 0 24px;padding-left:20px;font-size:11px;line-height:1.9;color:#82908a}
+.policy-list li{margin-bottom:4px}
+.attribution{display:block;font-size:10px;color:#a3ada0;margin-top:4px}
+@media(max-width:760px){.readiness-row{gap:8px;font-size:10px}}
