@@ -147,6 +147,7 @@ def test_verify_live_fails_loudly_against_an_unreachable_deployment():
     )
     assert result.returncode > 0
     assert 'FAIL  API health' in result.stdout
+    assert 'FAIL  header Content-Security-Policy' in result.stdout
     assert 'Release gate NOT met' in result.stdout
     assert 'checks passed: 0' in result.stdout
 

@@ -116,6 +116,25 @@ else
   bad 'frontend entry point not served (run the frontend build)'
 fi
 
+# Browser security headers: the application sets them on every response it
+# produces (see backend/security_headers.py). Checked here as well as in the unit
+# tests because the gate is what a deployment is judged by.
+ROOT_HEADERS="$(curl -fsSI --max-time 20 "$BASE/" 2>/dev/null || true)"
+check_header() {
+  local name="$1" expected="$2" actual
+  actual="$(printf '%s' "$ROOT_HEADERS" | grep -i "^$name:" | head -1 | tr -d '\r')"
+  case "$actual" in
+    *"$expected"*) ok "header $name present${expected:+ (${expected})}" ;;
+    "") bad "header $name is missing from the response for /" ;;
+    *) bad "header $name is present but does not contain ${expected}: ${actual:0:120}" ;;
+  esac
+}
+check_header 'Content-Security-Policy' "frame-ancestors 'none'"
+check_header 'Content-Security-Policy' "default-src 'self'"
+check_header 'X-Content-Type-Options' 'nosniff'
+check_header 'X-Frame-Options' 'DENY'
+check_header 'Referrer-Policy' 'strict-origin-when-cross-origin'
+
 case "$BASE" in
   https://*)
     if curl -fsSI --max-time 20 "$BASE/" 2>/dev/null | grep -qi '^strict-transport-security:'; then
