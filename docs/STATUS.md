@@ -31,8 +31,10 @@ verified there is marked as not claimed.
 | `41ce4dc` | Docs reconciled with the owner's decisions (Oracle Cloud Always Free, provider SMTP in the host environment file) and the new evidence |
 | `abf22fc` | **Retention enforced**: `backend/retention.py`, worker daily purge, `cli retention [--dry-run]`, 5 tests |
 | (this commit) | **Registration enumeration fixed**: one `202` answer for every address, no session from registration, notice to the address owner (hourly cooldown, audited), password hash before the branch, mail queued after the reply; 6 new regression tests |
+| `b2bc5a0` | **Registration enumeration fixed**: one `202` answer for every address, no session from registration, notice to the address owner (hourly cooldown, audited), password hash before the branch, mail queued after the reply; 6 new regression tests |
+| (this commit) | **Backup/restore drill** (`deploy/restore.sh`, 10 tests driving the API and the engine against a restored database) and **security headers** (`backend/security_headers.py`, CSP + framing + permissions on every response, mirrored at the proxy, 10 tests, zero CSP violations across the browser smoke) |
 
-Test suite: **105 passed** (`python -m pytest -q`). Browser smokes: full-stack (including the
+Test suite: **125 passed** (`python -m pytest -q`). Browser smokes: full-stack (including the
 confirmation banner and recovery entry point) and static-preview both pass locally and in CI.
 
 ## Waiting on the owner
@@ -53,11 +55,11 @@ confirmation banner and recovery entry point) and static-preview both pass local
 
 Ordered by risk closed per unit of effort, from `docs/AUDIT.md` §9:
 
-1. Content-Security-Policy and `frame-ancestors` headers with a documented
-   threat-model update (the proxy already sends `frame-ancestors 'none'`).
-2. A restore drill test: restore a database from a `deploy/backup.sh` snapshot
-   and verify row counts, not just the snapshot's own integrity (retention is now
-   enforced and the backup script is tested; the drill is still manual).
+1. Move rate limiting out of the process (edge limiter or shared store) — the
+   last item from `docs/AUDIT.md` §"gaps to close" that is still open, and the one
+   that needs the deployment to exist before it can be tuned.
+2. Encrypted off-host backup copies and a repeated monthly drill on the host
+   (the in-tree drill runs in CI; the off-host leg is the operator's step).
 3. Live updates over SSE with reconnect/backoff and a polling fallback, plus
    explicit stale-data indicators in the feed.
 4. Administration: incident merge/split, type correction, moderation queue,

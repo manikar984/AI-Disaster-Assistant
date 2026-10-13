@@ -1,5 +1,30 @@
 # Verification record
 
+## 2026-10-13 — backup/restore drill and browser security headers
+
+| Check | Actual result |
+|---|---|
+| `pytest tests/test_restore.py -q` | 10 passed |
+| `pytest tests/test_headers.py -q` | 10 passed |
+| `pytest -q` | **125 passed**, 1 third-party deprecation warning |
+| Drill (isolated data, real scripts) | seeded database → `deploy/backup.sh` → `deploy/restore.sh <snapshot> --to <fresh path>`: snapshot and restored copy both report `integrity ok`, no broken references, all 15 required tables, and row counts identical across users, sessions, locations, sources, reports, incidents, incident_reports, timeline, notifications, deliveries, audit and tokens |
+| Restored database is *usable* | the API runs against the restored file: sign-in with the password from the snapshot (`200`), `/api/incidents` returns the seeded incident with its timeline and evidence, the queued notification and saved location are there, and a **new** location posts successfully |
+| Restored database accepts new work | `ingest()` + `qualify_notifications()` against the restored file produce a new notification for a new qualifying incident, and `migrate()` is a no-op (the snapshot is migration-complete) |
+| Relationships preserved | every `locations`/`sessions` row resolves to a user, every `incident_reports` link resolves both ways (the seeded pair included), every `notifications` row resolves to an incident and a user, every `deliveries` row resolves to a notification, per-user rows stayed separate, and `runtime_state` (worker heartbeat) survived |
+| Live database untouched | SHA-256, size, mode and mtime of the source database identical before and after the drill; no rollback journal left behind |
+| Refusals (the safety rails) | no `--to` → exit 2 "Refusing to guess a destination"; existing target without `--force` → exit 1 and the target is byte-identical afterwards; `--to` pointing at `DATABASE_PATH` without `--force` → exit 1 "live database"; a file that is not a database → "not a usable SQLite database"; a snapshot with a dangling foreign key → "broken foreign-key reference"; in every failing case **no target file and no temporary file were left behind** |
+| Security headers on every response | `/`, `/api/health`, `/api/policy`, a missing asset, a 404, `401`, `403` (bad origin *and* missing header), `413` (oversized body) and `429` (rate limited) all carry all six headers — including the responses the boundary middleware returns before any route runs, which is what pins the middleware order |
+| Policy content | `default-src`/`script-src`/`connect-src` = `'self'` with no `'unsafe-inline'`/`'unsafe-eval'`; `frame-ancestors`, `object-src`, `base-uri` locked down; `style-src 'self'` with the single `style-src-attr 'unsafe-inline'` exception; `img-src` allows exactly the tile host read out of the frontend source plus `data:` for Leaflet's sprites; `Permissions-Policy` denies geolocation/camera/microphone/payment/USB, and the frontend contains no `navigator.geolocation` |
+| Browser smoke under the policy | full journey passes with **zero `securitypolicyviolation` events** (the runner now fails on any violation) — the map, Leaflet's inline positioning, the bundle and the stylesheet all load under `script-src 'self'` |
+| Static preview smoke | passed (GitHub Pages serves its own headers; the app's policy is served by the app) |
+| Proxy parity | `deploy/Caddyfile` carries the same CSP string as `backend/security_headers.py`, asserted byte for byte by a test, plus HSTS which stays at the proxy |
+
+Not covered here: the off-host encrypted copy of the backups, a drill from a real
+snapshot on the Oracle host, and a `report-uri` collector for CSP violations.
+Unhandled-exception 500s (Starlette's outermost error middleware) carry the
+proxy's headers but not the application's — documented in
+`backend/security_headers.py`.
+
 ## 2026-10-13 — registration enumeration: removed, and measured
 
 | Check | Actual result |

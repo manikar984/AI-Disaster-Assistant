@@ -144,9 +144,18 @@ audits are clean; no credentials exist in the working tree or history
 
 Gaps to close before public production use:
 
-1. **Missing browser security headers** — no `Content-Security-Policy`,
-   `X-Frame-Options`/`frame-ancestors` (clickjacking), HSTS (currently only in
-   the example reverse-proxy config), or COOP/CORP.
+1. ~~Missing browser security headers~~ — **closed**: `backend/security_headers.py`
+   sets `Content-Security-Policy` (scripts/styles/images/connections restricted to
+   this origin, the single map-tile host, `style-src-attr 'unsafe-inline'` for
+   Leaflet, `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`),
+   `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`,
+   `Permissions-Policy` and `Cross-Origin-Resource-Policy` on every response the
+   application produces, including its own 401/403/404/413/429 refusals; the
+   proxy repeats the identical policy string (asserted by a test) so unhandled
+   500s are covered too, and HSTS stays at the proxy which is the only layer that
+   knows TLS terminated. The browser smoke test now fails on any
+   `securitypolicyviolation`. Not done: a report-uri collector, and COOP (no
+   cross-origin windows are opened).
 2. **Rate limiting is in-process and proxy-blind** — `request.client.host` is
    the proxy address behind a load balancer, so all users share one bucket; a
    single abuser can exhaust the write budget for everyone, and a restart resets
@@ -190,10 +199,13 @@ rehearsed with a real data copy.
 
 1. Provision a persistent host with HTTPS, API + worker + durable volume, and
    verify the full checklist in section 19 of the project brief.
-2. Move rate limiting to the edge/shared store; add CSP/frame-ancestors/HSTS.
+2. Move rate limiting to the edge/shared store (CSP/frame-ancestors/HSTS are done).
 3. Implement account recovery + email verification, session revocation and
    idle expiry; add email verification before notifications are enabled.
-4. Add retention enforcement, automated encrypted backups and a restore drill.
+4. Add retention enforcement, automated encrypted backups and a restore drill
+   (retention and the restore drill are done: `backend/retention.py`,
+   `deploy/restore.sh`, `tests/test_restore.py`; off-host encryption is still
+   the operator's step).
 5. Add worker heartbeat / readiness and stale-feed alerting.
 6. Reach at least two independent, non-USGS evidence sources with documented
    provenance before claiming “cross-checked” incidents.
@@ -222,9 +234,11 @@ commands behind every claim. Items 4-8 and P1/P2 remain open.**
 3. Account security: email verification + expiring single-use recovery tokens
    (SMTP-gated, testable with a local fake SMTP server), session list/revoke-all,
    idle expiry, and hardened rate limiting.
-4. Security headers (CSP, frame-ancestors, HSTS via proxy) and a documented
-   threat-model update.
-5. Retention/backup/restore tooling with a test that restores a database.
+4. ~~Security headers (CSP, frame-ancestors, HSTS via proxy)~~ — delivered, see
+   `backend/security_headers.py` and `tests/test_headers.py`.
+5. ~~Retention/backup/restore tooling with a test that restores a database~~ —
+   delivered: `backend/retention.py`, `deploy/restore.sh`, `tests/test_retention.py`,
+   `tests/test_restore.py`.
 6. Live updates via SSE with reconnect/backoff and polling fallback, plus
    explicit stale-data indicators.
 7. Administration: reviewable incident merge/split, type correction, moderation
