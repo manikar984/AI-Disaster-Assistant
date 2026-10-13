@@ -190,15 +190,39 @@ sudo -u disaster DATABASE_PATH=/var/lib/disaster-assistant/assistant.db bash dep
 ls -l /var/backups/disaster-assistant/            # 0600 snapshots, 30-day retention
 ```
 
-The timer runs it nightly at 02:30 with a random delay. Do a restore drill once
-before inviting users:
+The timer runs it nightly at 02:30 with a random delay. **Drill the restore
+before inviting anyone** — and rehearse it with a throwaway target, not the live
+file:
+
+```sh
+cd ~/AI-Disaster-Assistant
+sudo -u disaster DATABASE_PATH=/var/lib/disaster-assistant/assistant.db bash deploy/restore.sh \
+    /var/backups/disaster-assistant/assistant-<stamp>.db --to /tmp/restore-drill.db
+
+# The restored file is a normal database: point the app at it and look around.
+sudo -u disaster DATABASE_PATH=/tmp/restore-drill.db .venv/bin/python -m backend.cli sources
+sudo -u disaster DATABASE_PATH=/tmp/restore-drill.db .venv/bin/python -c \
+  "from backend.db import connect
+with connect() as db:
+    print([r[0] for r in db.execute('SELECT count(*) FROM incidents')])"
+```
+
+`deploy/restore.sh` verifies the snapshot (integrity, foreign keys, required
+tables, row counts) **before** writing anything, refuses to guess a destination,
+refuses an existing target or the live database without `--force`, and moves the
+restored copy into place atomically. `tests/test_restore.py` performs this whole
+drill against isolated data on every CI run, including driving the API and the
+ingestion engine against the restored file.
+
+Only if the live database is genuinely damaged:
 
 ```sh
 sudo systemctl stop disaster-api disaster-worker
-sqlite3 /var/lib/disaster-assistant/assistant.db ".backup /tmp/restore.db"
-# compare counts, then (only if the live database is actually damaged) replace it:
-#   sudo install -o disaster -g disaster -m 0640 /tmp/restore.db /var/lib/disaster-assistant/assistant.db
+sudo -u disaster DATABASE_PATH=/var/lib/disaster-assistant/assistant.db bash deploy/restore.sh \
+    /var/backups/disaster-assistant/assistant-<stamp>.db \
+    --to /var/lib/disaster-assistant/assistant.db --force
 sudo systemctl start disaster-api disaster-worker
+curl -s https://<your-domain>/api/ready
 ```
 
 Copy snapshots off the machine (encrypted) as soon as you consider the data real.
