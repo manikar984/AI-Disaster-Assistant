@@ -36,25 +36,41 @@ verified there is marked as not claimed.
 | `7458b82` | **Release gate extended** to the headers, so a deployment cannot pass while serving no CSP (12 checks against the live pilot) |
 | `e9cf9b4` | **First-deployment checklist** (`docs/DEPLOY-CHECKLIST.md`): prerequisites, staged gates, every command with its expected output, the `/opt` install path the units actually use (the runbook previously sent you to `/home/ubuntu`, which `ProtectHome=true` would have made invisible), off-host encrypted backups, recovery, rollback and the "only the VM can verify this" table; tests keep the docs and the scripts from drifting apart again |
 | this commit | **Read-only fact collector** (`deploy/collect-facts.sh`) for verifying each deployment stage from real output while printing no secrets (allow-listed keys only), plus `docs/DEPLOY-SESSION.md` as the running record of the deployment; 5 tests cover it, including the mawk-on-Ubuntu trap its first run exposed here |
+| this commit | **Deployment paused by owner decision** (2026-10-14): the Oracle signup cannot be completed — card verification is declined and the owner will not use paid services — so no VM will be provisioned. The deployment preparation is complete and stays in the repository (`docs/DEPLOY-CHECKLIST.md`, `docs/DEPLOYMENT.md`, `docs/HOSTING.md`, `deploy/`) for whenever a host becomes available. Also in this commit: a pre-flight check in the static-preview smoke so a Pages-base build fails instantly with an explanation instead of timing out |
 
 Test suite: **133 passed** (`python -m pytest -q`). Browser smokes: full-stack (confirmation
 banner, recovery entry point, registration→sign-in, and a check that the enforced
 Content-Security-Policy produced no violations) and static-preview both pass locally and in CI.
 CI also runs the release gate (`deploy/verify-live.sh`) against the smoke server on every push.
 
+## Deployment: paused (owner decision, 2026-10-14)
+
+The first real deployment is **paused, not cancelled**: Oracle Cloud Free Tier
+requires a card for identity verification at signup, that verification is
+declined for the owner's cards, and upgrading to Pay-As-You-Go is not acceptable.
+Nothing was provisioned, nothing was billed, and no public disaster alerts exist.
+Everything needed to deploy is finished and in the repository behind
+`docs/DEPLOY-CHECKLIST.md`; a future host of any kind can use it as is.
+
+What stays true while this is paused: the application is a **locally runnable
+pilot**, verified against fixture feeds over real HTTP in tests, with no live
+source enabled and no provider delivery proven. `docs/VERIFICATION.md` is the
+record of what has actually been executed.
+
+Unblocking it later needs exactly one thing: a host with SSH access and a
+hostname (any free tier that offers a persistent VM and outbound HTTPS will do —
+`docs/HOSTING.md` compares the options, including the fallbacks). Then the
+checklist runs top to bottom.
+
 ## Waiting on the owner
 
-1. **Approve the deployment plan and provision the Oracle Cloud Always Free
-   instance** — the plan is `docs/DEPLOY-CHECKLIST.md`; account creation,
-   phone/card verification, the `VM.Standard.A1.Flex` instance, the reserved
-   public IP and its SSH access are the owner's steps (₹0; nothing is billed by
-   me). Region `ap-hyderabad-1` is closest; use whatever region actually has A1
-   capacity. Nothing is created or changed before you say go.
-2. **SMTP credentials in the host environment** — put the provider's
-   `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURITY`/`SMTP_USER`/`SMTP_PASSWORD`/`SMTP_FROM`
-   into `/etc/disaster-assistant/env` (never in chat, never in git). On the host,
-   `python -m backend.cli email-check --to <mailbox>` is what turns "configured"
-   into "proven end-to-end"; the arrival of that message is the acceptance test.
+1. **Review PR #2** — the branch is complete and green; merging is the owner's
+   call and nothing is merged on their behalf.
+2. **If a host ever becomes available:** create it, point a hostname at it, and
+   put SMTP credentials in `/etc/disaster-assistant/env` (never in chat, never in
+   git). `python -m backend.cli email-check --to <mailbox>` is what turns
+   "configured" into "proven end-to-end"; the arrival of that message is the
+   acceptance test.
 3. **Decision on the X/social adapter** — it stays unwired until a paid plan is
    approved; the previously public bearer token must be revoked by the owner.
 
@@ -64,7 +80,9 @@ Ordered by risk closed per unit of effort, from `docs/AUDIT.md` §9:
 
 1. Move rate limiting out of the process (edge limiter or shared store) — the
    last item from `docs/AUDIT.md` §"gaps to close" that is still open, and the one
-   that needs the deployment to exist before it can be tuned.
+   that needs the deployment to exist before it can be tuned. Note the in-process
+   limiter is sufficient for a single-node pilot; this is a scale item, not a
+   correctness one.
 2. Encrypted off-host backup copies and a repeated monthly drill on the host
    (the in-tree drill runs in CI; the off-host leg is the operator's step).
 3. Live updates over SSE with reconnect/backoff and a polling fallback, plus

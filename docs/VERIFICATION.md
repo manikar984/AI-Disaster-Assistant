@@ -1,5 +1,55 @@
 # Verification record
 
+## 2026-10-14 — repository review readiness (branch `arena/0aaecd40-ai-disaster-assistant`)
+
+Run for GitHub review preparation, after the owner paused the deployment. Every
+number below is from a command executed in this sandbox on this branch.
+
+### What is committed
+
+| Check | Actual result |
+|---|---|
+| Working tree | Clean; `git status --porcelain` empty; no untracked files; HEAD = `origin/arena/0aaecd40-ai-disaster-assistant` |
+| Tracked files | 80 across `backend/` 23, `web/` 11, `docs/` 10, `deploy/` 10, `tests/` 9, `.github/` 3, plus root files |
+| Build outputs excluded | `web/dist/` and `node_modules/` are gitignored and untracked; `.gitignore` also covers `.env`, `.venv/`, `*.db`(+`-wal`/`-shm`), caches and Playwright output |
+| Largest tracked file | 74 KB (`web/package-lock.json`); nothing binary except the 51 KB legacy `.pptx` |
+
+### Secret scan
+
+| Check | Actual result |
+|---|---|
+| Files added anywhere in the branch's 35 commits | Only `.env.example` matches env-like names — **no `.env`, private key, certificate, `*.db` or `*.age` file was ever added** |
+| Secret-shaped strings (GitHub/Slack/AWS/Google/OpenAI tokens, `BEGIN … PRIVATE KEY`) across **every commit**, not just HEAD | None |
+| `detect-secrets` (v1.5.0) over a `git archive HEAD` snapshot of the 80 tracked files | 7 findings in 4 files, all classified: `tests/test_auth.py:24-25`, `tests/test_platform.py:25,85,102`, `tests/test_restore.py:42` are obviously fake test passwords (`Strong-test-password-47`, `Restore-drill-password-47`); `web/src/main.tsx:129` is the password `<input>` markup flagged by keyword — a false positive. **Nothing in `backend/`, `deploy/`, `docs/` or `.github/`** |
+| `.env.example` | 21 keys, every one empty or a placeholder (`SMTP_PASSWORD=`, `X_BEARER_TOKEN=`), no real values |
+| Legacy `twitter_api.py` / `prototype.py` | Both read `X_BEARER_TOKEN` from the environment with an empty default; the hardcoded credential the README mentions as corrected is genuinely gone |
+| PII | Every address in the tree is `@example.com`/`@example.org`; the 42-record `disaster_data.json` fixture is loaded only by `cli sample`, stored with `mode='sample'` and source name "Legacy dataset (historical sample)" |
+| `gitleaks` | Could not run: its release binary redirects to `objects.githubusercontent.com`, unreachable from this sandbox. `detect-secrets` plus the per-commit scans above are the substitute; this is a tooling gap, not a clean bill of health from gitleaks |
+
+### Build, workflow and smoke tests
+
+| Check | Actual result |
+|---|---|
+| `python -m pytest -q` | **133 passed** |
+| Application build (root base, what FastAPI serves) | `index-et3bNit-.js` 487.88 kB (151.75 kB gzip), `index-dz-O9zzX.css` 40.90 kB (12.73 kB gzip) |
+| GitHub Pages build (`npm run build --prefix web -- --base=/AI-Disaster-Assistant/`) and the workflow's own asset assertions, replicated locally | **PASS** — `index.html` references `/AI-Disaster-Assistant/assets/…` only, and no root-relative `/assets/` URL remains |
+| Static-preview smoke, root build (`npm run test:static --prefix web`) | **PASS** (bundled chromium): the preview discloses the missing backend, shows no incidents, blocks misleading actions, no browser exceptions |
+| Static-preview smoke, **Pages-base build** (the mistake a reviewer will make) | Before this commit: a 32-second timeout with the real cause buried in the MIME-type diagnostics. After: fails in **0.75 s** naming the bad URLs and the fix, via a new pre-flight assertion |
+| Full-stack browser smoke (`bash .github/scripts/browser-smoke.sh`) | **PASS** — desktop feed, map, filters, evidence, authentication, saved location, public report, account deletion, mobile navigation, no horizontal overflow, **no CSP violations**, no browser exceptions; the release gate in the same run reports **12 passed, 0 failed** (TLS/HSTS checks correctly skipped off-HTTPS) |
+| `npm audit --prefix web` | 0 vulnerabilities |
+| `pip-audit -r requirements.lock` | No known vulnerabilities found |
+| CI on branch tip | Green: `38457043253`, `38457052845` at `1b9bfe6` |
+| GitHub Pages configuration | `build_type: workflow`, `status: built`, `https://manikar984.github.io/AI-Disaster-Assistant/`; last two Pages runs succeeded (on `main`, `f02fdee` and `2dec0d1`). The demo reflects `main` only — it will not show this branch's changes until the PR is merged, which is the owner's decision |
+
+### Deployment status recorded this round
+
+The owner **paused** the first deployment: Oracle Cloud signup requires card
+verification that could not be completed, and paid services are not an option.
+Nothing was provisioned, no account was created, nothing was billed, no live
+source was enabled and no public alert can exist. `docs/STATUS.md`,
+`docs/DEPLOY-SESSION.md`, `docs/DEPLOY-CHECKLIST.md` and `README.md` now state
+that plainly instead of describing the deployment as merely pending.
+
 ## 2026-10-13 — deployment preparation (nothing deployed)
 
 | Check | Actual result |

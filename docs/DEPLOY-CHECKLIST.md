@@ -1,5 +1,11 @@
 # First deployment checklist — Oracle Cloud Always Free
 
+**Status: paused (owner decision, 2026-10-14).** This procedure is complete and
+ready to run, but the deployment it describes is not being executed: Oracle Cloud
+signup needs card verification that could not be completed, and paid services are
+not an option. Nothing was provisioned or billed. Read on only if and when a host
+becomes available.
+
 **Read this before touching the console.** It is the step-by-step, copy-paste
 version of `docs/DEPLOYMENT.md`, written for the first real deployment: every
 command, every file path, what you should see after it, and the exact point at

@@ -11,11 +11,13 @@ An evidence-first disaster monitoring **pilot**, evolved from the original Strea
 - Normalized durable reports, conservative classification/severity screening, duplicate suppression, nearby community grouping, official event revisions.
 - Single-worker USGS polling with backoff, malformed-record isolation and visible source health. Network access needed; live fetching unverified in Arena.
 - Accounts with confirmed email addresses: a new account gets in-app alerts immediately and email alerts only after it confirms its address with a single-use link; password recovery uses a 1-hour single-use link that signs out every device, and sessions can be listed and revoked (`SESSION_DAYS`, `SESSION_IDLE_DAYS`).
-- Geographic/severity/freshness/trust gates, in-app notifications, and an SMTP outbox with retries and delivery-attempt logs. The SMTP path is exercised against a real server in the test suite; delivery through a paid provider is awaiting the owner's credentials.
+- Geographic/severity/freshness/trust gates, in-app notifications, and an SMTP outbox with retries and delivery-attempt logs. The SMTP path is exercised against a real server in the test suite; delivery through a commercial provider is unproven, and the first deployment is paused (see below).
 - Administrator status/severity reviews and audit log, ingestion/delivery inspection.
 - Versioned SQL migration, configuration example, container configuration, CI definition and tests.
 
 No validated ML accuracy, calibrated probability, automated independent-source corroboration, browser push, SMS, WhatsApp, live X/RSS/CAP adapter, or public production deployment is claimed. See [limitations and deployment gates](docs/OPERATIONS.md).
+
+The first deployment to Oracle Cloud Always Free is **paused by the owner's decision**: signup requires card verification that could not be completed, and paid services are not an option. Nothing was provisioned or billed, no live source is enabled, and no public alerts exist. The deployment preparation is finished and kept ready — procedure in [docs/DEPLOY-CHECKLIST.md](docs/DEPLOY-CHECKLIST.md), state in [docs/STATUS.md](docs/STATUS.md).
 
 ## Quick start
 

@@ -32,6 +32,22 @@ const server = createServer(async (request, response) => {
 });
 await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
 
+// Pre-flight: this preview serves the build at the site root, so it must be the
+// root-path build. A `--base=/AI-Disaster-Assistant/` build (what the Pages
+// workflow publishes, where the app really does live under that path) points at
+// assets that do not exist here, and without this check the mistake surfaces as a
+// 30-second timeout with a MIME-type error buried in the diagnostics.
+const indexHtml = await readFile(join(root, 'index.html'), 'utf8');
+const assetUrls = [...indexHtml.matchAll(/(?:src|href)="([^"]*assets\/[^"]*)"/g)].map((match) => match[1]);
+const nonRootUrls = assetUrls.filter((url) => !url.startsWith('/assets/'));
+assert.equal(
+  nonRootUrls.length,
+  0,
+  `web/dist was built with a base path (${nonRootUrls.join(', ') || 'unknown'}); `
+  + 'run "npm run build --prefix web" with no --base before this preview test, '
+  + 'or the page will request assets that only exist on GitHub Pages.',
+);
+
 const { browser, channel } = await launchBrowser();
 const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
 const evidence = instrumentPage(page);

@@ -25,7 +25,7 @@ once a stage is proven.
 | # | Stage | State | Evidence |
 |---|---|---|---|
 | 0 | Plan approved; repository prepared | **done** | `docs/DEPLOY-CHECKLIST.md`; commits `e9cf9b4`… |
-| 1 | Owner prerequisites: Oracle account, SSH key, hostname, SMTP account | **in progress — the first signup attempt failed at the card-verification step**; the bank-controls and exact-billing-details checklist is in `docs/DEPLOY-CHECKLIST.md` §1, and the escalation email is below | this file, §1 record |
+| 1 | Owner prerequisites: Oracle account, SSH key, hostname, SMTP account | **stopped by owner decision (2026-10-14)** — Oracle's card verification cannot be completed and paid services are not an option. The bank-controls and exact-billing-details checklist stays in `docs/DEPLOY-CHECKLIST.md` §1, and the escalation email is below, should the owner ever want to retry | this file, §1 record |
 | 2 | VM created, networking, reserved IP, DNS record | not started | |
 | 3 | Provisioned: packages, service account, units, proxy config | not started | |
 | 4 | Application installed in `/opt/disaster-assistant`, frontend built | not started | |
@@ -136,7 +136,7 @@ or anything from `~/.ssh`.
 | Deployment path | **systemd units + Caddy in `deploy/`** — the path `tests/test_deploy.py` covers. The Dockerfile/`compose.yaml` are a development convenience: no TLS proxy, no test coverage | decided (documentation corrected in `e9cf9b4`) |
 | Hosting | Oracle Cloud Always Free, `VM.Standard.A1.Flex` 2 OCPU / 12 GB, Ubuntu 24.04, 100 GB boot | decided |
 | Reserved public IP | recommended ($0, keeps DNS + ACME stable across instance recreation) | owner to confirm in the console |
-| Pay-As-You-Go | **not approved** — it lifts the free hard cap. Only worth revisiting if A1 capacity cannot be obtained at all, and only with the owner's explicit go-ahead | open |
+| Pay-As-You-Go | **rejected by the owner** — it lifts the free hard cap, and paid services are not an option. Deployment is paused instead | decided (2026-10-14) |
 | Email | one free provider's SMTP, credentials only as host environment variables | decided |
 | Reverse-proxy TLS | Caddy + Let's Encrypt, HTTP redirected to HTTPS, HSTS | decided |
 | Backups | nightly on-host snapshots (30-day retention) + off-host `age`-encrypted copy; restore drill before inviting users | decided |
