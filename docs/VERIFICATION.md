@@ -1,5 +1,23 @@
 # Verification record
 
+## 2026-10-13 — email channel end-to-end and the release gate
+
+| Check | Actual result |
+|---|---|
+| `pytest -q` | **94 passed**, 1 third-party deprecation warning (Starlette/httpx in `TestClient`) |
+| `pytest tests/test_email.py -q` | 13 passed — every transport mode over a real loopback socket |
+| Implicit TLS (`SMTP_SECURITY=ssl`, port 465 semantics) | PASS: TLS wraps the socket before the greeting, `EHLO` first, **no** `STARTTLS` attempted, `AUTH PLAIN` accepted, message stored, delivery `accepted`, `attempts=1`, `sent_at` set |
+| Implicit TLS certificate verification | PASS (fails closed): without the fixture CA the send is refused, no message stored, delivery `retry` with `CertificateVerifyError`-style text — there is no switch to disable verification |
+| Cancellation gates | PASS: stale alert (published 7 h ago) → `cancelled`, **0 attempts**, no socket traffic; superseded version → `cancelled`, 0 attempts; withdrawn consent → `cancelled`; a `Resolved` correction 3 days old is **not** suppressed and is delivered |
+| `deploy/verify-live.sh http://127.0.0.1:1` (nothing listening) | 8 failures, `Release gate NOT met`, exit status 8 — the gate cannot pass vacuously |
+| `deploy/verify-live.sh http://127.0.0.1:8000` (live pilot) | **7 passed, 0 failed**, exit 0: health, database, worker heartbeat live (age 0 s), evidence policy, live feed, sample provenance, frontend served |
+| `PYTHON=.venv/bin/python bash .github/scripts/browser-smoke.sh` | PASS — the runner now starts **API and worker together**, waits for `/api/ready` `worker: alive`, runs the 11-checkpoint browser suite, then executes the release gate against the same live server: `checks passed: 7, failed: 0` |
+| `GET /api/ready` now reports the mail channel | `checks.email = configured` or `not configured` (peer of `database`/`worker`); verified on the pilot as `(not reported)` before the restart and `not configured` after — an unconfigured provider never blocks readiness, it is simply visible |
+
+What this does **not** prove: that a provider relay accepts and a human inbox
+receives a message. That needs the owner's SMTP credentials on the host, and the
+command that closes it is `python -m backend.cli email-check --to <mailbox>`.
+
 ### Live pilot checks (running API + worker on port 8000)
 
 | Check | Observed response |

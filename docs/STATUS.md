@@ -10,8 +10,8 @@ verified there is marked as not claimed.
 | Criterion | Status | Evidence / what is missing |
 |---|---|---|
 | Live ingestion from a real source | **Implemented, not yet observed live** | USGS, GDACS, RSS/Atom and CAP adapters with per-source health, counters and backoff; verified end-to-end against a local HTTP fixture server (`tests/test_sources.py`, 13 tests). Outbound access to the real hosts is blocked in this sandbox, so each source must be enabled and polled once on the deployment host (`python -m backend.cli poll --source usgs`). |
-| One notification channel proven end-to-end | **Half proven — provider chosen (Brevo)** | The email path is proven over a real SMTP conversation (STARTTLS, AUTH, MIME, retries, redaction) and has an operator command that proves a live deployment. Brevo relay settings and the sender/DKIM checklist are in `docs/DEPLOYMENT.md` step 7. Delivery to a human inbox is **not claimed** until `email-check` delivers to the owner's mailbox. |
-| Public HTTPS deployment | **Awaiting the owner's host decision** | `docs/HOSTING.md` compares Oracle Cloud Always Free, Fly.io (Mumbai), DigitalOcean (Bangalore), Hetzner, Render, Railway and Koyeb on the three things this app cannot do without (always-on worker, persistent disk, HTTPS) and recommends Oracle Always Free at $0. No resource is created and no cost is incurred until the owner approves. Once approved: `deploy/` (systemd units, Caddy config, provisioning script, tested nightly backup) and `docs/DEPLOYMENT.md` are ready to run. |
+| One notification channel proven end-to-end | **Half proven — mechanism agreed (provider SMTP in the host environment)** | The email path is proven over a real SMTP conversation in all three transport modes, including implicit TLS (STARTTLS, `ssl`, `plain`; AUTH, MIME, retries, cancellation and redaction; 13 tests). The provider relay settings and sender/DKIM checklist are in `docs/DEPLOYMENT.md` step 7, with Brevo as the worked example only. Delivery to a human inbox is **not claimed** until `email-check` delivers to the owner's mailbox on the host. |
+| Public HTTPS deployment | **Approved: Oracle Cloud Always Free — waiting for the owner to provision the instance** | The owner chose Oracle Cloud Always Free (`docs/HOSTING.md` keeps the comparison behind that decision; it is the only $0 option with an always-on worker and a persistent disk). No resource is created and no cost is incurred by me. Everything needed to deploy is committed: `deploy/` (systemd units, Caddy config, provisioning script, tested nightly backup), `docs/DEPLOYMENT.md` (11 steps) and the release gate `deploy/verify-live.sh`, which the CI smoke run executes against a live server on every push. |
 | Protection of private data | **Implemented, reviewable** | scrypt password hashing, HttpOnly/SameSite=Strict sessions, per-user row scoping, ownership checks, CSRF origin + header checks, 20 KB body cap, rate limits, no secrets in the frontend bundle, redacted mail errors, documented retention/backup policy. Not measured: penetration test, MFA, distributed throttling. |
 
 ## Delivered on this branch
@@ -33,15 +33,15 @@ confirmation banner and recovery entry point) and static-preview both pass local
 
 ## Waiting on the owner
 
-1. **Hosting approval** — Oracle Cloud Always Free (recommended, ₹0) or a paid
-   fallback (Hetzner ≈ ₹430/month, Fly.io ≈ $2–4/month). Account creation,
-   verification and the credit card are the owner's steps; no credentials or
-   card details ever go through chat. See `docs/HOSTING.md`.
-2. **Host decision + SMTP credentials** — pick Oracle Always Free (recommended,
-   $0) or a paid fallback from `docs/HOSTING.md`; then create the account and put
-   the SMTP credentials in the host's environment (never in chat). On the host,
+1. **Provision the Oracle Cloud Always Free instance** — decide: account
+   creation, phone/card verification, the `VM.Standard.A1.Flex` instance and its
+   SSH access are the owner's steps (₹0; nothing is billed by me). Region
+   `ap-hyderabad-1` is closest; use whatever region actually has A1 capacity.
+2. **SMTP credentials in the host environment** — put the provider's
+   `SMTP_HOST`/`SMTP_PORT`/`SMTP_SECURITY`/`SMTP_USER`/`SMTP_PASSWORD`/`SMTP_FROM`
+   into `/etc/disaster-assistant/env` (never in chat, never in git). On the host,
    `python -m backend.cli email-check --to <mailbox>` is what turns "configured"
-   into "proven end-to-end".
+   into "proven end-to-end"; the arrival of that message is the acceptance test.
 3. **Decision on the X/social adapter** — it stays unwired until a paid plan is
    approved; the previously public bearer token must be revoked by the owner.
 

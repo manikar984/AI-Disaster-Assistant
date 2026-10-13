@@ -1,9 +1,13 @@
 # Hosting recommendation
 
-**Status: nothing has been created and nothing has been spent.** This is the
-comparison and recommendation you asked for; creating any resource needs your
-explicit go-ahead, and account signup (including any card verification) is yours
-— I never ask for credentials in chat.
+**Decision (owner, 2026-10-13): Oracle Cloud Always Free**, with the email
+channel proven by a provider's SMTP credentials placed in the deployment's
+environment file. Nothing has been created and nothing has been spent: account
+signup, phone/card verification and the VM are the owner's own steps, and the
+deployment run starts when the owner says the instance is ready.
+
+The comparison below is kept because it explains *why* that choice fits: it is
+the only $0 option that runs an always-on worker with a persistent disk.
 
 ## What the application actually needs
 
@@ -75,14 +79,20 @@ database), Koyeb's free tier (no worker service, no volumes), and any
 scale-to-zero host, because ingestion would silently stop while the UI still
 said "live".
 
-## What I need before deploying
+## What the deploy run needs from the owner
 
-1. Your choice: Oracle Always Free (recommended) or one of the paid fallbacks.
-2. For Oracle: the region you managed to provision in, and either a domain you
-   already own or permission to use a free DuckDNS name for HTTPS.
-3. For the email channel: which provider's credentials will live in the
-   deployment's environment (see `docs/OPERATIONS.md`) — free tiers are fine,
-   and I never need to see the secret itself.
+1. An Oracle Cloud account with an Always Free `VM.Standard.A1.Flex` instance
+   (2 OCPU / 12 GB, 200 GB block storage) reachable over SSH — the owner creates
+   it; I never handle the account's credentials.
+2. The region the instance actually started in, and either a domain you already
+   own or permission to use a free DuckDNS name for Let's Encrypt HTTPS.
+3. A provider's SMTP credentials set in `/etc/disaster-assistant/env` on the host
+   (free tiers are fine; `docs/DEPLOYMENT.md` step 7 uses Brevo only as the
+   worked example). The secret never passes through chat or this repository.
+4. Confirmation that the SMTP credentials are in place, so I can run
+   `python -m backend.cli email-check --to <mailbox>` and record the proof.
 
-The Dockerfile, Compose file, environment contract and verification steps are
-already in the repository, so deployment is a run, not a rewrite.
+`deploy/` (provisioning script, systemd units, Caddy config, tested backup) and
+`docs/DEPLOYMENT.md` are already in the repository, so deployment is a run, not a
+rewrite. `bash deploy/verify-live.sh https://<host>` is the release gate that
+checks the running deployment before anything is called done.

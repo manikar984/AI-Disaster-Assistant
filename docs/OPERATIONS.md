@@ -75,23 +75,30 @@ What the test suite already proves, without any provider account
 path): a queued delivery becomes an `accepted` row with a `sent_at` timestamp
 and one attempt; the MIME message that arrives carries the incident, its
 verification state and the "not a government warning" label; STARTTLS is used by
-default and is verified against a pinned CA (the client never disables
-certificate validation); `AUTH PLAIN` credentials are sent only when
+default, implicit TLS (`SMTP_SECURITY=ssl`, provider port 465 semantics) is
+covered too (in both modes the client never disables certificate validation and
+fails closed on an untrusted certificate); `AUTH PLAIN` credentials are sent only when
 `SMTP_USER` is set; rejected credentials are recorded as a `retry` with the
 SMTP reason and the password redacted out of the stored error; a provider outage
 escalates `retry` → `failed` after five attempts with 60 s → 480 s backoff; and
 `python -m backend.cli email-check` fails closed when SMTP is not configured.
 
 What only the owner can prove is delivery to a human inbox through a real
-provider. Procedure on the deployment host:
+provider. The owner's decision is a provider's SMTP credentials in the host's
+environment file (Brevo is the runbook example, not a requirement). Procedure on
+the deployment host:
 
-1. Create an SMTP-enabled account with any transactional provider. The owner
-   approved **Brevo** (free tier, 300 messages/day): host `smtp-relay.brevo.com`,
-   port 587, security `starttls`, `SMTP_USER` is the account address and
-   `SMTP_PASSWORD` is an SMTP key created in the Brevo dashboard. Other providers
-   (Resend, SendGrid, Postmark, Mailgun, SES) or a Google Workspace app password
-   work identically. Note the host, port and credential — do not paste them into
-   chat, a ticket or the repository.
+0. Fastest path — one command that runs the email proof and the rest of the
+   release gate: `set -a; . /etc/disaster-assistant/env; set +a` then
+   `bash deploy/verify-live.sh https://<your-host> --to YOUR_OWN_MAILBOX`.
+1. Create an SMTP-enabled account with any transactional provider. The worked
+   example is **Brevo** (free tier, 300 messages/day): host
+   `smtp-relay.brevo.com`, port 587, security `starttls`, `SMTP_USER` is the
+   account address and `SMTP_PASSWORD` is an SMTP key created in the dashboard.
+   Providers that submit on port 465 with implicit TLS work the same way —
+   set `SMTP_SECURITY=ssl`. Other providers (Resend, SendGrid, Postmark, Mailgun,
+   SES) or a Google Workspace app password work identically. Note the host, port
+   and credential — do not paste them into chat, a ticket or the repository.
 2. Put them in the host's `0600` environment file only (`/etc/disaster-assistant/env`
    on the Oracle VM — see `docs/DEPLOYMENT.md` steps 5 and 7), then restart the
    API and worker so both see it:

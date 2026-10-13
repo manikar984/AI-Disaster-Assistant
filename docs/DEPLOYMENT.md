@@ -106,6 +106,7 @@ DATABASE_PATH=/var/lib/disaster-assistant/assistant.db
 # Data sources — official feeds stay off until you enable them deliberately.
 USGS_ENABLED=true
 GDACS_ENABLED=true
+# Operator feeds, comma-separated as Name|https://url (empty = none configured).
 NEWS_FEEDS=
 CAP_FEEDS=
 
@@ -132,18 +133,34 @@ journalctl -u disaster-api -f      # first startup applies migrations
 
 ## 7. Prove it works (this is the release gate, not a formality)
 
+From the host, with the environment loaded so the script can also run the email
+proof:
+
 ```sh
 cd ~/AI-Disaster-Assistant
+set -a; . /etc/disaster-assistant/env; set +a
+bash deploy/verify-live.sh https://disaster-demo.duckdns.org --to your-own-mailbox
+```
+
+The gate fails (non-zero exit) unless the API answers, the database is reachable,
+the worker heartbeat is live, no source is in `error`, the policy is published,
+the frontend is served, and — on HTTPS — HSTS is present. The same script runs in
+CI against the smoke server on every push, so the checks cannot rot.
+
+The same checks by hand:
+
+```sh
 curl -s https://disaster-demo.duckdns.org/api/health      # {"status":"ok",...}
-curl -s https://disaster-demo.duckdns.org/api/ready       # status/worker/sources
+curl -s https://disaster-demo.duckdns.org/api/ready       # status/worker/sources/email
 
 .venv/bin/python -m backend.cli sources                   # registry + health
 .venv/bin/python -m backend.cli poll --source usgs        # fetch a real feed ONCE
 .venv/bin/python -m backend.cli sources                   # expect usgs: healthy, records>0
 ```
 
-* `/api/ready` must report `worker: alive`. `degraded` with
-  `"no live source is enabled"` is the honest state until step 6 enables a feed.
+* `/api/ready` must report `worker: alive`; `checks.email` is `configured` once
+  step 7's SMTP variables are in the environment file. `degraded` with
+  `"no live source is enabled"` is the honest state until step 5 enables a feed.
 * A `poll` that fails is a failure to report, not to hide: put the message in
   `docs/VERIFICATION.md` as-is.
 * Register a throwaway account over HTTPS and confirm in the browser devtools
