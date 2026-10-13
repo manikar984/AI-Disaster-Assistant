@@ -77,7 +77,8 @@ See [actual verification results](docs/VERIFICATION.md), not just these commands
 | `docs/ARCHITECTURE.md` | Contracts, trust model and technology decisions |
 | `docs/OPERATIONS.md` | Setup, deployment, security, costs, retention, remaining work |
 | `docs/SOURCES.md` | Every adapter, its publisher, mapping policy and health states |
-| `docs/HOSTING.md` | Hosting comparison and the recommendation asked for by the owner |
+| `docs/HOSTING.md` | Hosting comparison and the decision (Oracle Always Free) |
+| `docs/DEPLOYMENT.md`, `deploy/` | Runbook, systemd units, Caddy config, provisioning and backup scripts |
 
 ## GitHub Pages
 

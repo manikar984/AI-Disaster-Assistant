@@ -85,11 +85,16 @@ escalates `retry` → `failed` after five attempts with 60 s → 480 s backoff; 
 What only the owner can prove is delivery to a human inbox through a real
 provider. Procedure on the deployment host:
 
-1. Create an SMTP-enabled account with any transactional provider (Brevo,
-   Resend, SendGrid, Postmark, Mailgun, Amazon SES) or use a Google Workspace /
-   Gmail app password. Note the submission host, port and credential — do not
-   paste them into chat, a ticket or the repository.
-2. Put them in the host's `0600` environment file only:
+1. Create an SMTP-enabled account with any transactional provider. The owner
+   approved **Brevo** (free tier, 300 messages/day): host `smtp-relay.brevo.com`,
+   port 587, security `starttls`, `SMTP_USER` is the account address and
+   `SMTP_PASSWORD` is an SMTP key created in the Brevo dashboard. Other providers
+   (Resend, SendGrid, Postmark, Mailgun, SES) or a Google Workspace app password
+   work identically. Note the host, port and credential — do not paste them into
+   chat, a ticket or the repository.
+2. Put them in the host's `0600` environment file only (`/etc/disaster-assistant/env`
+   on the Oracle VM — see `docs/DEPLOYMENT.md` steps 5 and 7), then restart the
+   API and worker so both see it:
    `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls` for 587, `ssl` for 465),
    `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` (an address the provider has
    authorised for the domain), then restart the API and worker so both see it.

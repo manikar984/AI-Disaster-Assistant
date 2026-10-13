@@ -1,0 +1,17 @@
+[Unit]
+Description=Disaster Assistant nightly database backup
+Documentation=file:@APP_DIR@/docs/DEPLOYMENT.md
+After=disaster-api.service
+
+[Service]
+Type=oneshot
+User=@APP_USER@
+Group=@APP_USER@
+EnvironmentFile=@ETC_DIR@/env
+Environment=BACKUP_DIR=@BACKUP_DIR@
+ExecStart=/bin/bash @APP_DIR@/deploy/backup.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=@BACKUP_DIR@ @DATA_DIR@

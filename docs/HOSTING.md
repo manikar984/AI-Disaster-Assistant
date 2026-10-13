@@ -1,5 +1,14 @@
 # Hosting options and recommendation
 
+## Decision (2026-10-13)
+
+The owner chose **Oracle Cloud Always Free**, and **Brevo** for the email
+channel. Deployment is prepared in `deploy/` and `docs/DEPLOYMENT.md`: systemd
+units, a Caddy reverse proxy with automatic HTTPS, a system-provisioning script
+and a tested nightly SQLite backup. Nothing has been created in Oracle yet — the
+account, the VM and the mail account are the owner's steps, and the runbook
+instructs exactly what to run.
+
 **Status: recommendation only — nothing has been created, and no cost has been
 incurred.** Items marked *(verify at signup)* are published prices that must be
 re-confirmed on the provider's checkout page before committing.

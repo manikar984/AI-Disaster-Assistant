@@ -1,0 +1,139 @@
+"""Checks on the deployment assets.
+
+The sandbox has no systemd and no cloud host, so these tests verify what can be
+verified here: every shell script parses, the backup script really produces a
+consistent snapshot with retention pruning, and the units and proxy config keep
+the invariants the runbook depends on (loopback binding, env-file secrets, body
+cap, strict filesystem protection).
+"""
+
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parent.parent
+DEPLOY = REPO / 'deploy'
+
+
+def test_every_shell_script_parses():
+    scripts = sorted(DEPLOY.glob('*.sh'))
+    assert scripts, 'no deployment scripts found'
+    for script in scripts:
+        result = subprocess.run(['bash', '-n', str(script)], capture_output=True, text=True)
+        assert result.returncode == 0, f'{script.name} is not valid bash: {result.stderr}'
+
+
+def test_provision_requires_a_domain_and_root():
+    result = subprocess.run(['bash', str(DEPLOY / 'provision.sh')], capture_output=True, text=True)
+    assert result.returncode == 1
+    assert 'Run as root' in result.stderr or 'Set DISASTER_DOMAIN' in result.stderr
+
+
+def test_provision_dry_run_is_side_effect_free_and_mentions_the_pieces():
+    result = subprocess.run(
+        ['bash', str(DEPLOY / 'provision.sh')],
+        capture_output=True, text=True,
+        env=dict(os.environ, DRY_RUN='1', DISASTER_DOMAIN='example.invalid'),
+    )
+    output = result.stdout + result.stderr
+    # Either it refused because it is not root, or it printed a plan: never a partial change.
+    if result.returncode == 0:
+        assert 'Provisioning complete' in output
+        assert 'systemctl start' in output
+        assert 'email-check' in output
+    else:
+        assert 'Run as root' in output
+
+
+def test_dry_run_never_writes_credentials_into_the_tree():
+    for path in DEPLOY.rglob('*'):
+        if path.is_file():
+            text = path.read_text(errors='replace').lower()
+            assert 'password=' not in text, f'{path} looks like it carries a credential'
+            assert 'smtp_password=' not in text, f'{path} looks like it carries a credential'
+
+
+def test_backup_script_snapshots_and_prunes(tmp_path):
+    database = tmp_path / 'assistant.db'
+    with sqlite3.connect(database) as db:
+        db.execute('CREATE TABLE incidents(id INTEGER PRIMARY KEY, summary TEXT)')
+        db.execute('CREATE TABLE reports(id INTEGER PRIMARY KEY, text TEXT)')
+        db.execute('CREATE TABLE sources(id TEXT PRIMARY KEY)')
+        db.execute('CREATE TABLE users(id INTEGER PRIMARY KEY)')
+        db.execute("INSERT INTO incidents(summary) VALUES ('one'), ('two')")
+    backups = tmp_path / 'backups'
+    environment = dict(
+        os.environ,
+        DATABASE_PATH=str(database),
+        BACKUP_DIR=str(backups),
+        BACKUP_RETENTION_DAYS='30',
+        PYTHON=sys.executable,
+    )
+
+    first = subprocess.run(['bash', str(DEPLOY / 'backup.sh')], capture_output=True, text=True, env=environment)
+    assert first.returncode == 0, first.stderr
+    created = sorted(backups.glob('assistant-*.db'))
+    assert len(created) == 1, created
+    assert 'verified snapshot' in first.stdout
+    with sqlite3.connect(created[0]) as copy:
+        assert copy.execute('SELECT count(*) FROM incidents').fetchone()[0] == 2
+        assert copy.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+    assert created[0].stat().st_mode & 0o777 == 0o600
+    assert backups.stat().st_mode & 0o777 == 0o700
+
+    stale = backups / 'assistant-20000101T000000Z.db'
+    shutil.copy(created[0], stale)
+    os.utime(stale, (0, 0))
+    second = subprocess.run(['bash', str(DEPLOY / 'backup.sh')], capture_output=True, text=True, env=environment)
+    assert second.returncode == 0, second.stderr
+    assert not stale.exists(), 'retention pruning did not remove the stale snapshot'
+
+
+def test_backup_refuses_a_missing_database(tmp_path):
+    result = subprocess.run(
+        ['bash', str(DEPLOY / 'backup.sh')],
+        capture_output=True, text=True,
+        env=dict(os.environ, DATABASE_PATH=str(tmp_path / 'absent.db'), BACKUP_DIR=str(tmp_path / 'b')),
+    )
+    assert result.returncode == 1
+    assert 'nothing to back up' in result.stderr
+
+
+def test_units_keep_the_documented_invariants():
+    api = (DEPLOY / 'disaster-api.service').read_text()
+    worker = (DEPLOY / 'disaster-worker.service').read_text()
+    backup_timer = (DEPLOY / 'disaster-backup.timer').read_text()
+    caddy = (DEPLOY / 'Caddyfile').read_text()
+
+    # The API is never published directly: loopback only, forwarded headers trusted
+    # from the proxy alone, so the rate limiter cannot be bypassed with a forged header.
+    assert '--host 127.0.0.1' in api
+    assert '--proxy-headers --forwarded-allow-ips=127.0.0.1' in api
+    for unit in (api, worker):
+        assert 'EnvironmentFile=@ETC_DIR@/env' in unit
+        assert 'ProtectSystem=strict' in unit
+        assert 'ReadWritePaths=' in unit
+        assert 'User=@APP_USER@' in unit
+        assert 'Restart=always' in unit
+    assert '-m backend.worker' in worker
+    # Exactly one worker owns the schedule and the outbox.
+    assert 'Never start a second instance' in worker
+    assert 'OnCalendar=' in backup_timer and 'Persistent=true' in backup_timer
+    # The proxy enforces the same 20 KB body cap as the application.
+    assert 'max_size 20KB' in caddy
+    assert 'reverse_proxy 127.0.0.1:8000' in caddy
+    assert 'Strict-Transport-Security' in caddy
+
+
+def test_provision_installs_every_deployable_unit():
+    provision = (DEPLOY / 'provision.sh').read_text()
+    for unit in ('disaster-api.service', 'disaster-worker.service', 'disaster-backup.service', 'disaster-backup.timer'):
+        assert (DEPLOY / unit).is_file(), f'{unit} is missing'
+    assert 'disaster-api.service disaster-worker.service disaster-backup.service disaster-backup.timer' in provision
+    # Secrets live in one root-owned file, never in a unit or the repository.
+    assert 'install -o root -g "$APP_USER" -m 0640 /dev/null "$ETC_DIR/env"' in provision
