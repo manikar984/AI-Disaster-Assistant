@@ -137,3 +137,31 @@ def test_provision_installs_every_deployable_unit():
     assert 'disaster-api.service disaster-worker.service disaster-backup.service disaster-backup.timer' in provision
     # Secrets live in one root-owned file, never in a unit or the repository.
     assert 'install -o root -g "$APP_USER" -m 0640 /dev/null "$ETC_DIR/env"' in provision
+
+
+def test_verify_live_fails_loudly_against_an_unreachable_deployment():
+    """The gate must not report success when nothing is listening."""
+    result = subprocess.run(
+        ['bash', str(DEPLOY / 'verify-live.sh'), 'http://127.0.0.1:1'],
+        capture_output=True, text=True, timeout=180,
+    )
+    assert result.returncode > 0
+    assert 'FAIL  API health' in result.stdout
+    assert 'Release gate NOT met' in result.stdout
+    assert 'checks passed: 0' in result.stdout
+
+
+def test_verify_live_rejects_unknown_arguments():
+    result = subprocess.run(
+        ['bash', str(DEPLOY / 'verify-live.sh'), 'http://127.0.0.1:1', '--wat'],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 2
+    assert 'unknown argument' in result.stderr
+
+
+def test_ci_smoke_runner_executes_the_release_gate():
+    """CI must run the same gate a deployment is judged by, on the live server."""
+    script = (REPO / '.github' / 'scripts' / 'browser-smoke.sh').read_text()
+    assert 'deploy/verify-live.sh' in script
+    assert 'release-gate checks' in script

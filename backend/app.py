@@ -407,11 +407,17 @@ def ready():
         problems.append(f"{summary['error']} source(s) failing")
     if summary['stale']:
         problems.append(f"{summary['stale']} source(s) stale")
+    # Reported for operators only: an unconfigured mail provider does not make the
+    # deployment unready (in-app alerts work), but the release gate needs to see it.
+    try:
+        email = 'configured' if mailer.settings()['configured'] else 'not configured'
+    except mailer.MailError as exc:
+        email = f'misconfigured: {exc}'
     return {
         'status': 'ready' if not problems else 'degraded',
         'version': '0.2.0',
         'problems': problems,
-        'checks': {'database': database, 'worker': worker, 'worker_heartbeat_age_seconds': age},
+        'checks': {'database': database, 'worker': worker, 'worker_heartbeat_age_seconds': age, 'email': email},
         'sources': summary,
     }
 

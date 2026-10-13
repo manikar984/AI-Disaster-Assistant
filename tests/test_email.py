@@ -11,7 +11,7 @@ last step is what `python -m backend.cli email-check` proves on the deployment.
 import os
 import socket
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -197,3 +197,87 @@ def test_sending_without_a_host_reports_configuration_not_a_traceback(mailbox):
     with pytest.raises(mailer.MailError) as error:
         mailer.send(mailer.build_message('person@example.com', 'subject', 'body'))
     assert 'SMTP_HOST' in str(error.value)
+
+
+def test_implicit_tls_on_the_submission_port_is_supported(mailbox, monkeypatch):
+    """Provider port 465: TLS wraps the socket before the server greeting."""
+    with SmtpFixture(implicit_tls=True, require_auth=('relay-user', 'relay-secret-9')) as smtp:
+        monkeypatch.setenv('SMTP_HOST', '127.0.0.1')
+        monkeypatch.setenv('SMTP_PORT', str(smtp.port))
+        monkeypatch.setenv('SMTP_SECURITY', 'ssl')
+        monkeypatch.setenv('SMTP_FROM', 'alerts@example.org')
+        monkeypatch.setenv('SMTP_USER', 'relay-user')
+        monkeypatch.setenv('SMTP_PASSWORD', 'relay-secret-9')
+        monkeypatch.setenv('SSL_CERT_FILE', smtp.ca_file)
+        queue_alert()
+        deliver_email()
+        assert smtp.commands()[0].startswith('EHLO')
+        assert not any(line.startswith('STARTTLS') for line in smtp.commands())
+        assert any(line.startswith('AUTH') for line in smtp.commands())
+        assert smtp.parsed()['X-Disaster-Assistant-Channel'] == 'email'
+        assert smtp.parsed()['To'] == 'person@example.com'
+    row = delivery_row()
+    assert row['status'] == 'accepted' and row['attempts'] == 1 and row['sent_at']
+
+
+def test_implicit_tls_still_verifies_the_provider_certificate(mailbox, monkeypatch):
+    """No way to turn verification off: an untrusted certificate must fail closed."""
+    with SmtpFixture(implicit_tls=True) as smtp:
+        monkeypatch.setenv('SMTP_HOST', '127.0.0.1')
+        monkeypatch.setenv('SMTP_PORT', str(smtp.port))
+        monkeypatch.setenv('SMTP_SECURITY', 'ssl')
+        monkeypatch.setenv('SMTP_FROM', 'alerts@example.org')
+        queue_alert()
+        deliver_email()
+        assert smtp.messages == []
+    row = delivery_row()
+    assert row['status'] == 'retry' and row['attempts'] == 1
+    assert 'certificate' in row['last_error'].lower()
+
+
+def test_stale_alert_is_cancelled_instead_of_mailed(mailbox, monkeypatch):
+    """An alert that stopped being news must not reach an inbox hours later."""
+    with SmtpFixture() as smtp:
+        monkeypatch.setenv('SMTP_HOST', '127.0.0.1')
+        monkeypatch.setenv('SMTP_PORT', str(smtp.port))
+        monkeypatch.setenv('SMTP_SECURITY', 'plain')
+        monkeypatch.setenv('SMTP_FROM', 'alerts@example.org')
+        queue_alert()
+        with connect() as db:
+            db.execute('UPDATE incidents SET published_at=?', ((datetime.now(timezone.utc) - timedelta(hours=7)).isoformat(),))
+        deliver_email()
+        assert smtp.messages == []
+    row = delivery_row()
+    assert row['status'] == 'cancelled' and row['attempts'] == 0 and row['sent_at'] is None
+
+
+def test_resolution_is_not_suppressed_by_the_freshness_window(mailbox, monkeypatch):
+    """A correction to an old event is still worth sending."""
+    with SmtpFixture() as smtp:
+        monkeypatch.setenv('SMTP_HOST', '127.0.0.1')
+        monkeypatch.setenv('SMTP_PORT', str(smtp.port))
+        monkeypatch.setenv('SMTP_SECURITY', 'plain')
+        monkeypatch.setenv('SMTP_FROM', 'alerts@example.org')
+        queue_alert()
+        with connect() as db:
+            db.execute('UPDATE incidents SET published_at=?, verification=?', ((datetime.now(timezone.utc) - timedelta(days=3)).isoformat(), 'Resolved'))
+        deliver_email()
+        assert len(smtp.messages) == 1
+    assert delivery_row()['status'] == 'accepted'
+
+
+def test_superseded_alert_version_is_cancelled(mailbox, monkeypatch):
+    """If a newer version replaced the alert text, the queued copy must not arrive."""
+    with SmtpFixture() as smtp:
+        monkeypatch.setenv('SMTP_HOST', '127.0.0.1')
+        monkeypatch.setenv('SMTP_PORT', str(smtp.port))
+        monkeypatch.setenv('SMTP_SECURITY', 'plain')
+        monkeypatch.setenv('SMTP_FROM', 'alerts@example.org')
+        queue_alert()
+        with connect() as db:
+            # The incident was revised after the alert text was queued.
+            db.execute('UPDATE incidents SET version=version+1 WHERE id=(SELECT incident_id FROM notifications ORDER BY id LIMIT 1)')
+        deliver_email()
+        assert smtp.messages == []
+    row = delivery_row()
+    assert row['status'] == 'cancelled' and row['attempts'] == 0

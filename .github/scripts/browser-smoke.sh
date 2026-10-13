@@ -23,11 +23,15 @@ RESULTS="$REPO_ROOT/web/test-results"
 mkdir -p "$RESULTS"
 
 stop_server() {
-  if [ -n "${API_PID:-}" ] && kill -0 "$API_PID" 2>/dev/null; then
-    kill "$API_PID" 2>/dev/null
-    wait "$API_PID" 2>/dev/null
-    API_PID=""
-  fi
+  # The workspace runs exactly what a deployment runs: one API and one worker.
+  for pid in "${API_PID:-}" "${WORKER_PID:-}"; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+    fi
+  done
+  API_PID=""
+  WORKER_PID=""
 }
 
 annotate() {
@@ -56,25 +60,43 @@ fail() {
 API_PID=$!
 trap stop_server EXIT
 
+# The ingestion worker runs alongside the API, exactly as systemd starts it in a
+# deployment, so the smoke run covers the heartbeat and the job loop too.
+"$PYTHON" -m backend.worker >>"$API_LOG" 2>&1 &
+WORKER_PID=$!
+
 "$PYTHON" - <<'PY' >>"$API_LOG" 2>&1
-import sys, time, urllib.request
-for _ in range(40):
+import json, sys, time, urllib.request
+health = False
+for _ in range(60):
     try:
         with urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=2) as response:
-            if response.status == 200:
-                sys.exit(0)
+            health = response.status == 200
+        if health:
+            with urllib.request.urlopen('http://127.0.0.1:8001/api/ready', timeout=2) as response:
+                if json.load(response).get('checks', {}).get('worker') == 'alive':
+                    sys.exit(0)
     except OSError:
-        time.sleep(1)
-sys.exit('API did not start')
+        pass
+    time.sleep(1)
+sys.exit('API healthy but the worker never reported a heartbeat' if health else 'API did not start')
 PY
-[ $? -eq 0 ] || fail "API did not become healthy on port 8001"
+[ $? -eq 0 ] || fail "the API or the worker did not become ready on port 8001"
 
 TEST_URL="${TEST_URL:-http://127.0.0.1:8001}" npm run test:browser --prefix web >"$TEST_LOG" 2>&1
 STATUS=$?
-stop_server
-
 if [ $STATUS -ne 0 ]; then
+  stop_server
   fail "browser test exited with status $STATUS"
+fi
+
+# The same deployment must satisfy the release gate it will be judged by.
+printf '\n[smoke] release-gate checks (deploy/verify-live.sh)\n' >>"$TEST_LOG"
+bash deploy/verify-live.sh "http://127.0.0.1:8001" >>"$TEST_LOG" 2>&1
+GATE=$?
+stop_server
+if [ $GATE -ne 0 ]; then
+  fail "release-gate checks reported $GATE failure(s)"
 fi
 
 cat "$TEST_LOG"

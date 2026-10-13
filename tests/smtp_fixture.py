@@ -1,9 +1,9 @@
 """A real SMTP server on loopback, shared by the email and account tests.
 
-The fixture is deliberately a genuine SMTP conversation — EHLO, STARTTLS with a
-self-signed certificate, AUTH PLAIN, MAIL/RCPT/DATA — so tests that redeem a
-link from an email are exercising the same path a user does. It stands in for
-the mail provider until the deployment supplies credentials.
+The fixture is deliberately a genuine SMTP conversation — EHLO, STARTTLS or
+implicit TLS with a self-signed certificate, AUTH PLAIN, MAIL/RCPT/DATA — so
+tests that redeem a link from an email are exercising the same path a user does.
+It stands in for the mail provider until the deployment supplies credentials.
 """
 
 import base64
@@ -20,8 +20,9 @@ import threading
 class SmtpFixture:
     """Minimal SMTP server: EHLO, STARTTLS, AUTH PLAIN, MAIL, RCPT, DATA, NOOP, QUIT."""
 
-    def __init__(self, *, starttls=False, require_auth=None):
+    def __init__(self, *, starttls=False, implicit_tls=False, require_auth=None):
         self.starttls = starttls
+        self.implicit_tls = implicit_tls
         self.require_auth = require_auth
         self.messages = []
         self.session = []
@@ -33,7 +34,7 @@ class SmtpFixture:
 
     # -- lifecycle ---------------------------------------------------------
     def __enter__(self):
-        if self.starttls:
+        if self.starttls or self.implicit_tls:
             directory = tempfile.mkdtemp(prefix='smtp-fixture-')
             key, cert = os.path.join(directory, 'key.pem'), os.path.join(directory, 'cert.pem')
             subprocess.run(
@@ -82,6 +83,13 @@ class SmtpFixture:
         connection.sendall((line + '\r\n').encode())
 
     def _session(self, connection):
+        if self.implicit_tls:
+            # Port 465 semantics: TLS is negotiated before the server greets. A
+            # client that refuses this self-signed certificate just hangs up.
+            try:
+                connection = self._context.wrap_socket(connection, server_side=True)
+            except (ssl.SSLError, OSError):
+                return
         reader = connection.makefile('rb')
         try:
             self._reply(connection, '220 fixture.local ESMTP ready')
@@ -115,7 +123,10 @@ class SmtpFixture:
                     else:
                         self._reply(connection, '220 2.0.0 Ready to start TLS')
                         reader.close()
-                        connection = self._context.wrap_socket(connection, server_side=True)
+                        try:
+                            connection = self._context.wrap_socket(connection, server_side=True)
+                        except (ssl.SSLError, OSError):
+                            return
                         reader = connection.makefile('rb')
                 elif command == 'AUTH':
                     mechanism, _, payload = argument.partition(' ')
