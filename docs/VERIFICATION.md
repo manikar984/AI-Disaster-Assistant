@@ -11,6 +11,7 @@
 | Real purge against seeded data | Removed exactly: 1 raw payload (nulled, the report row kept), 1 ingestion run, 1 delivery + 1 notification, 1 inactive unverified incident, 1 expired session, 1 expired token, 1 old audit row. Kept: the corroborated incident, the fresh incident, the sample incident, the fresh notification/delivery, the live session/token, the fresh audit row, and the account row |
 | Idempotence | Second purge returns `{}` — nothing is reported as deleted twice |
 | Worker scheduling | `purge_if_due()` purges and writes a `runtime_state` marker; an immediate second call returns `None`; after ageing the marker past the window it runs again |
+| Live pilot (API + worker on port 8000) | The running worker applied the policy on its first cycle and wrote `runtime_state.last_purge` = `{"purged": {}, "policy_days": {...}, "at": "2026-10-13T17:57:24+00:00"}` — nothing was due, so nothing was deleted |
 
 Not covered here: the off-host backup copy, the monthly restore drill, and any
 legal review of the audit window — those stay owner/operator tasks.
