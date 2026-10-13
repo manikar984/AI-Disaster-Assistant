@@ -34,9 +34,10 @@ verified there is marked as not claimed.
 | `5c7ea85` | **Backup/restore drill**: `deploy/restore.sh` (verify before writing, refuse to guess a target, atomic placement) and 10 tests that restore a snapshot and drive the API and the ingestion engine against it |
 | `b74e7ca` | **Security headers**: `backend/security_headers.py` (CSP with `script-src 'self'`, `frame-ancestors 'none'`, `object-src`/`base-uri 'none'`, denied page permissions, documented Leaflet/tile exceptions), applied to every response including the middleware's own 403/413/429 refusals, mirrored byte for byte in `deploy/Caddyfile`; 10 tests plus zero `securitypolicyviolation` events in the browser smoke |
 | `7458b82` | **Release gate extended** to the headers, so a deployment cannot pass while serving no CSP (12 checks against the live pilot) |
-| (this commit) | **First-deployment checklist** (`docs/DEPLOY-CHECKLIST.md`): prerequisites, staged gates, every command with its expected output, the `/opt` install path the units actually use (the runbook previously sent you to `/home/ubuntu`, which `ProtectHome=true` would have made invisible), off-host encrypted backups, recovery, rollback and the "only the VM can verify this" table; 3 tests keep the docs and the scripts from drifting apart again |
+| `e9cf9b4` | **First-deployment checklist** (`docs/DEPLOY-CHECKLIST.md`): prerequisites, staged gates, every command with its expected output, the `/opt` install path the units actually use (the runbook previously sent you to `/home/ubuntu`, which `ProtectHome=true` would have made invisible), off-host encrypted backups, recovery, rollback and the "only the VM can verify this" table; tests keep the docs and the scripts from drifting apart again |
+| this commit | **Read-only fact collector** (`deploy/collect-facts.sh`) for verifying each deployment stage from real output while printing no secrets (allow-listed keys only), plus `docs/DEPLOY-SESSION.md` as the running record of the deployment; 5 tests cover it, including the mawk-on-Ubuntu trap its first run exposed here |
 
-Test suite: **128 passed** (`python -m pytest -q`). Browser smokes: full-stack (confirmation
+Test suite: **133 passed** (`python -m pytest -q`). Browser smokes: full-stack (confirmation
 banner, recovery entry point, registration→sign-in, and a check that the enforced
 Content-Security-Policy produced no violations) and static-preview both pass locally and in CI.
 CI also runs the release gate (`deploy/verify-live.sh`) against the smoke server on every push.

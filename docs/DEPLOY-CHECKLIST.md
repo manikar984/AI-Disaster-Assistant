@@ -39,12 +39,31 @@ Each stage has a rollback in §11. No stage costs money.
 
 | # | What | Notes |
 |---|---|---|
-| 1 | Oracle Cloud account | Signup needs a card for identity verification. Always Free resources are **not** billed; keep it Always Free and read the cost page before enabling anything else. |
+| 1 | Oracle Cloud account | Needs a **physical** Visa/Mastercard (Oracle rejects virtual, prepaid and single-use cards); a small temporary authorisation hold appears and is released. Your name and address must match the card statement, and do the signup on home broadband with no VPN. |
 | 2 | An SSH key pair on your laptop | `ssh-keygen -t ed25519 -C "oracle-vm"` if you do not have one. The private key never leaves your laptop. |
 | 3 | A hostname | A free DuckDNS subdomain works (`disaster-demo.duckdns.org`); a domain you own works the same way. |
 | 4 | An SMTP account | Any transactional provider with SMTP (Brevo is the worked example: free tier, 300 messages/day). You will paste the credentials **only** into the VM's environment file, never into chat, git or a ticket. |
 | 5 | A terminal with `ssh`, `curl`, `dig`, `scp` | Any Linux/macOS shell, or Windows with OpenSSH and WSL. |
 | 6 | About an hour | Stage A is ~30 minutes of waiting for TLS and installs. |
+
+**The one decision at signup you cannot take back:** your **home region**. Always
+Free compute exists only in the home region, and Oracle will not move it later.
+Pick the closest one that has A1 capacity — `ap-hyderabad-1` or `ap-mumbai-1` for
+India. If the console flags a region as short of Always Free capacity, believe it
+and pick the other; nearby regions can be worse for you on latency *and* no better
+on capacity.
+
+**Capacity is the real risk, not cost.** Many new accounts meet "Out of host
+capacity" when launching an A1 instance. Options in order of preference: retry
+(the pool frees up constantly, often within hours), try another availability
+domain, or — only as a deliberate decision you make with the trade-offs known —
+upgrade to Pay-As-You-Go, which removes the hard free cap and therefore can bill
+you if anything exceeds the Always Free limits. **Do not upgrade without talking
+to me first**; if you do, set a budget alert before creating anything.
+
+**The first thing to do after signup:** Menu → Billing & Cost Management →
+**Budgets** → create a budget of `₹0` (or `$0`) on your compartment with a 1 %
+alert. It is free, and it is your tripwire for anything that starts costing money.
 
 **What I need from you, ever:** the hostname, the region/shape you provisioned,
 and the *outputs* of the commands below. **What you never send me:** the SMTP
@@ -390,6 +409,19 @@ checks passed: 12, failed: 0
 
 `INFO  email channel: not configured` is correct at this stage: Stage B fixes it.
 A non-zero exit means the deployment is **not** done — fix the named check first.
+
+**Capture the evidence for the record.** One read-only command reports the host,
+capacity, tooling, units, listeners, firewall state, database, both health
+endpoints and the DNS/TLS picture — with every secret reported as `<set>` rather
+than printed, so the output is safe to paste anywhere:
+
+```sh
+sudo bash /opt/disaster-assistant/deploy/collect-facts.sh disaster-demo.duckdns.org
+```
+
+Run it at each stage (after provisioning, after the first start, after Stage C and
+after Stage D) and record the output in `docs/DEPLOY-SESSION.md`; the distilled
+result goes into `docs/VERIFICATION.md`.
 
 ---
 
@@ -767,6 +799,8 @@ copies are manual until you approve more automation.
 | Services | `caddy`, `disaster-api`, `disaster-worker`, `disaster-backup.service`, `disaster-backup.timer` |
 | API bind | `127.0.0.1:8000` (loopback only; Caddy is the only public listener) |
 | Release gate | `deploy/verify-live.sh <url> [--to <mailbox>]` |
+| Evidence collector (read-only, prints no secrets) | `deploy/collect-facts.sh [hostname]` |
+| Session record | `docs/DEPLOY-SESSION.md` |
 | Backup / restore / provision | `deploy/backup.sh`, `deploy/restore.sh`, `deploy/provision.sh` |
 | Operator CLI | `.venv/bin/python -m backend.cli {sources,poll,email-check,retention,admin,reset-password,sample}` |
 | Static demo (Pages) | `https://manikar984.github.io/AI-Disaster-Assistant/` — the demo, not the deployment |

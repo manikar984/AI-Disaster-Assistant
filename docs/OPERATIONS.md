@@ -50,6 +50,17 @@ python -m backend.cli reset-password --email person@example.com
 Password changes revoke all sessions. Public registration never grants administrator privileges. Recovery has no public token/email flow yet.
 
 ## Container pilot deployment (not executed here)
+
+**Note on which route to follow.** The authoritative deployment path for the
+first real host is the systemd one — `docs/DEPLOY-CHECKLIST.md` (step by step,
+with expected output) over `docs/DEPLOYMENT.md` (reference), using
+`deploy/provision.sh`, the four units and Caddy. That is the path
+`tests/test_deploy.py` covers, including the release gate `deploy/verify-live.sh`.
+The compose route below is kept because it is genuinely useful for local and
+container work, but it has no TLS proxy in the stack, no release gate and no test
+coverage: if you use it, Caddy still goes in front (step 3), and the checks in
+step 7–8 are the minimum before calling it done.
+
 1. Build with `docker compose build`; create `.env` with production origin, `COOKIE_SECURE=true`, source configuration and provider secrets.
 2. `docker compose up -d`. API and exactly one worker share the `assistant-data` volume. SQLite WAL requires a reliable local filesystem, not networked storage. Do not scale replicas.
 3. Put an HTTPS reverse proxy on the **same host**, with request body limit 20 KB, read/connect timeouts, per-IP throttling, TLS renewal, HSTS and upstream Host preservation. Compose binds host port to loopback; external traffic must use the proxy.
@@ -99,9 +110,13 @@ the deployment host:
    set `SMTP_SECURITY=ssl`. Other providers (Resend, SendGrid, Postmark, Mailgun,
    SES) or a Google Workspace app password work identically. Note the host, port
    and credential — do not paste them into chat, a ticket or the repository.
-2. Put them in the host's `0600` environment file only (`/etc/disaster-assistant/env`
-   on the Oracle VM — see `docs/DEPLOYMENT.md` steps 5 and 7), then restart the
-   API and worker so both see it:
+2. Put them in the host's environment file only (`/etc/disaster-assistant/env`
+   on the Oracle VM — see `docs/DEPLOYMENT.md` steps 5 and 7). It is created
+   `0640 root:disaster`: systemd reads it as root and injects the values, and the
+   `disaster` group read is what lets the documented operator commands
+   (`sudo -u disaster … set -a; . /etc/disaster-assistant/env; set +a`) work.
+   A root-only `0600` file would still start the services but would break every
+   manual proof command. Then restart the API and worker so both see it:
    `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURITY` (`starttls` for 587, `ssl` for 465),
    `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` (an address the provider has
    authorised for the domain), then restart the API and worker so both see it.
