@@ -1,5 +1,17 @@
 # Verification record
 
+## 2026-10-13 — deployment preparation (nothing deployed)
+
+| Check | Actual result |
+|---|---|
+| Repository + documentation review | `docs/DEPLOYMENT.md`, `docs/HOSTING.md`, `docs/OPERATIONS.md`, `docs/STATUS.md`, `docs/VERIFICATION.md`, `deploy/*`, `.env.example`, `Dockerfile`, `compose.yaml` read end to end |
+| Defect found | The runbook installed the application in `~/AI-Disaster-Assistant` while the systemd units run from `/opt/disaster-assistant` **with `ProtectHome=true`** — a literal first deployment would have failed with the services unable to see the code. Corrected in `docs/DEPLOYMENT.md`, required by `docs/DEPLOY-CHECKLIST.md`, and pinned by a new test |
+| Defect found | `docs/HOSTING.md` described the Oracle host as running `docker compose`; the verified route is the systemd units + Caddy in `deploy/` (the compose stack has no TLS proxy and no test coverage). The document now says so |
+| Environment-file mechanism, verified locally | `set -a; . /etc/disaster-assistant/env; set +a` really does export the values to the child process (checked with a stand-in file and the project's own CLI). A `0640` file owned by another account is unreadable by an unrelated user, and readable once the reader is in the file's group; `sudo -u <account-with-nologin-shell> bash -c …` runs the command directly, which is the pattern used throughout the checklist |
+| Documentation consistency | 3 tests assert that the runbooks and the scripts agree on `/opt/disaster-assistant`, that the checklist keeps its five staged gates and its two honesty rules ("never manufacture an event", "verify on the VM"), and that every path, service name and script it names exists |
+| `pytest -q` | **128 passed** |
+| Hard limit of this work | **No VM, account, DNS record, certificate, feed fetch or email has been created or executed.** Oracle-specific behaviour (arm64 images, A1 capacity, Security List, the image's iptables ruleset, ACME issuance, the nightly timer) remains unverified and is listed as such in `docs/DEPLOY-CHECKLIST.md` §13 |
+
 ## 2026-10-13 — full sweep after the enumeration, restore-drill and header work
 
 Every command below was run on the final commit of this set (`7458b82`), in this

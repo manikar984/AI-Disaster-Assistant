@@ -11,6 +11,12 @@ browser ──HTTPS──▶ Caddy :443 ──▶ 127.0.0.1:8000 uvicorn backend
                                     └── /var/backups/disaster-assistant/           (nightly snapshots)
 ```
 
+**New to this?** Follow `docs/DEPLOY-CHECKLIST.md` instead: same procedure, but
+with prerequisites, every command in order, the expected output of each step, the
+staged "do not announce until verified" gates, and an explicit list of what can
+only be checked on the VM. This file stays the reference for the reasoning, the
+cost table and the rollback detail.
+
 **Honesty note:** this runbook has been written from the verified code path but
 has **not** been executed against a real Oracle account from this environment
 (no cloud account, no systemd, outbound egress restricted). The parts that can be
@@ -55,15 +61,23 @@ Let's Encrypt issuance in step 5 needs DNS to resolve *before* Caddy starts.
 
 ## 3. Install the application
 
+**It goes in `/opt/disaster-assistant`.** The systemd units run the API and the
+worker from there and set `ProtectHome=true`, so a clone under `/home/ubuntu`
+would be invisible to the services and the units would fail with "no such file".
+Clone to a working copy first, then install into `/opt`:
+
 ```sh
 ssh ubuntu@<vm-ip>
 sudo apt-get update && sudo apt-get install -y git
 
-git clone --branch main https://github.com/manikar984/AI-Disaster-Assistant.git
-cd AI-Disaster-Assistant
-python3 -m venv .venv
-.venv/bin/pip install --upgrade pip
-.venv/bin/pip install -r requirements.lock
+git clone --branch main https://github.com/manikar984/AI-Disaster-Assistant.git ~/src
+sudo mkdir -p /opt/disaster-assistant
+sudo rsync -a --delete --exclude '.git' ~/src/ /opt/disaster-assistant/
+
+cd /opt/disaster-assistant
+sudo python3 -m venv .venv
+sudo .venv/bin/pip install --upgrade pip
+sudo .venv/bin/pip install -r requirements.lock
 ```
 
 **Frontend build.** The API serves `web/dist`, so it must exist before start:
@@ -72,10 +86,20 @@ python3 -m venv .venv
 # Option A (recommended): Node 22 from NodeSource, then build on the VM
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
-npm ci --prefix web && npm run build --prefix web
+cd /opt/disaster-assistant
+sudo npm ci --prefix web && sudo npm run build --prefix web
 
 # Option B: build locally and copy the artefacts (no Node on the VM)
-rsync -av --delete web/dist/ ubuntu@<vm-ip>:~/AI-Disaster-Assistant/web/dist/
+rsync -av --delete web/dist/ ubuntu@<vm-ip>:/tmp/dist/
+ssh ubuntu@<vm-ip> 'sudo rsync -a --delete /tmp/dist/ /opt/disaster-assistant/web/dist/'
+```
+
+Then hand the tree to the service account (readable, not writable, by it):
+
+```sh
+sudo chown -R root:disaster /opt/disaster-assistant
+sudo chmod -R u=rwX,go=rX /opt/disaster-assistant
+sudo -u disaster test -x /opt/disaster-assistant/.venv/bin/uvicorn && echo "disaster can execute the venv"
 ```
 
 Do **not** build with `--base=/AI-Disaster-Assistant/`; that is only for the
@@ -137,9 +161,7 @@ From the host, with the environment loaded so the script can also run the email
 proof:
 
 ```sh
-cd ~/AI-Disaster-Assistant
-set -a; . /etc/disaster-assistant/env; set +a
-bash deploy/verify-live.sh https://disaster-demo.duckdns.org --to your-own-mailbox
+sudo -u disaster bash -c 'set -a; . /etc/disaster-assistant/env; set +a; cd /opt/disaster-assistant && bash deploy/verify-live.sh https://disaster-demo.duckdns.org --to your-own-mailbox'
 ```
 
 The gate fails (non-zero exit) unless the API answers, the database is reachable,
@@ -195,7 +217,7 @@ before inviting anyone** — and rehearse it with a throwaway target, not the li
 file:
 
 ```sh
-cd ~/AI-Disaster-Assistant
+cd /opt/disaster-assistant
 sudo -u disaster DATABASE_PATH=/var/lib/disaster-assistant/assistant.db bash deploy/restore.sh \
     /var/backups/disaster-assistant/assistant-<stamp>.db --to /tmp/restore-drill.db
 

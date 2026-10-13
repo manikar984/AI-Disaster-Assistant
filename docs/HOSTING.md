@@ -37,10 +37,14 @@ Verify on the provider's own pricing page before committing to anything.
 ## Recommendation
 
 **Deploy on Oracle Cloud Always Free** — one `VM.Standard.A1.Flex` instance
-(up to 4 OCPU / 24 GB RAM; 2 OCPU / 12 GB is plenty) with 200 GB block storage
-in a nearby region (`ap-mumbai-1` Mumbai or `ap-hyderabad-1` Hyderabad both
-exist), running `docker compose` from this repository with Caddy in front for
-HTTPS.
+(2 OCPU / 12 GB is the Always Free A1 ceiling reported since June 2026, with
+4 OCPU / 24 GB for Pay-As-You-Go; verify at signup, since sources disagree) with
+200 GB block storage in a nearby region (`ap-mumbai-1` Mumbai or
+`ap-hyderabad-1` Hyderabad both exist), running the systemd units and Caddy from
+`deploy/` (`docs/DEPLOY-CHECKLIST.md`, `docs/DEPLOYMENT.md`). The Dockerfile and
+`compose.yaml` in the repository are a development convenience: the compose stack
+publishes the API on loopback with no TLS proxy and is not the route that
+`tests/test_deploy.py` verifies.
 
 Why this one:
 
@@ -52,8 +56,8 @@ Why this one:
   serverless reshaping of the poller.
 * **India latency**: Mumbai/Hyderabad regions, and the free tier includes 10 TB
   of monthly egress, which no small-scale deployment will approach.
-* **ARM is fine**: the app is pure Python plus static assets; `python:3.12-slim`
-  and `caddy` have arm64 images.
+* **ARM is fine**: the app is pure Python plus static assets, and Ubuntu's
+  `python3`, `caddy` and `sqlite3` packages all ship for arm64.
 
 Known drawbacks, stated plainly:
 

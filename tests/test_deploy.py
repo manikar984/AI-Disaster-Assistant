@@ -166,3 +166,52 @@ def test_ci_smoke_runner_executes_the_release_gate():
     script = (REPO / '.github' / 'scripts' / 'browser-smoke.sh').read_text()
     assert 'deploy/verify-live.sh' in script
     assert 'release-gate checks' in script
+
+
+def test_the_runbooks_install_the_application_where_the_units_look_for_it():
+    """The defect this test exists for: the runbook installed into /home/ubuntu
+    while the units run from /opt/disaster-assistant with ProtectHome=true, so a
+    literal first deployment would have failed with "no such file"."""
+    provision = (DEPLOY / 'provision.sh').read_text()
+    assert 'APP_DIR="${APP_DIR:-/opt/disaster-assistant}"' in provision
+
+    units = ''.join((DEPLOY / name).read_text() for name in ('disaster-api.service', 'disaster-worker.service'))
+    assert 'WorkingDirectory=@APP_DIR@' in units
+    assert 'ProtectHome=true' in units, 'the units hide /home, which is why the app cannot live there'
+
+    for name in ('DEPLOYMENT.md', 'DEPLOY-CHECKLIST.md'):
+        text = (REPO / 'docs' / name).read_text()
+        assert '/opt/disaster-assistant' in text, f'{name} must install into the directory the units use'
+        assert '~/AI-Disaster-Assistant' not in text, f'{name} still points at a home-directory install'
+        assert 'ProtectHome' in text, f'{name} must explain why /opt is required'
+        # The command shape the checklist tells an operator to run must survive
+        # into the docs intact: env file loaded for one shell, as the service user.
+        assert "bash -c 'set -a; . /etc/disaster-assistant/env; set +a;" in text
+
+
+def test_the_checklist_keeps_the_release_gates_explicit():
+    """A beginner-facing page must not let someone skip the staged gates."""
+    text = (REPO / 'docs' / 'DEPLOY-CHECKLIST.md').read_text()
+    for stage in ('**A. Infrastructure**', '**B. Email transport**', '**C. Live ingestion**', '**D. One real alert**', '**E. Public**'):
+        assert stage in text, f'{stage} is missing from the checklist'
+    # The two rules that keep the project honest must be stated on the page itself.
+    assert 'Never manufacture an event' in text
+    assert 'verify on the VM' in text
+    # And the page must not promise a deployment that has not happened. The prose
+    # is wrapped, so compare on normalised whitespace rather than raw lines.
+    flat = ' '.join(text.split())
+    assert 'Nothing below has been executed on a real Oracle VM' in flat
+    assert 'Do not claim deployment or live integration tests have passed' not in flat
+    assert 'verify on the VM' in flat
+
+
+def test_the_checklist_paths_match_the_scripts_and_units():
+    text = (REPO / 'docs' / 'DEPLOY-CHECKLIST.md').read_text()
+    assert '/var/lib/disaster-assistant/assistant.db' in text
+    assert '/var/backups/disaster-assistant' in text
+    assert '/etc/disaster-assistant/env' in text
+    assert 'deploy/verify-live.sh' in text and 'deploy/restore.sh' in text and 'deploy/backup.sh' in text
+    for unit in ('disaster-api', 'disaster-worker', 'disaster-backup.timer', 'caddy'):
+        assert unit in text, f'{unit} is not named in the checklist'
+    # The API stays on loopback: Caddy is the only public listener.
+    assert '127.0.0.1:8000' in text
