@@ -30,12 +30,15 @@ verified there is marked as not claimed.
 | `31cdd1b` | **Email channel proven in every transport mode** (implicit TLS added, cancellation gates, 5 new tests) and **`deploy/verify-live.sh`**, the release gate that CI now runs against a live server on every push |
 | `41ce4dc` | Docs reconciled with the owner's decisions (Oracle Cloud Always Free, provider SMTP in the host environment file) and the new evidence |
 | `abf22fc` | **Retention enforced**: `backend/retention.py`, worker daily purge, `cli retention [--dry-run]`, 5 tests |
-| (this commit) | **Registration enumeration fixed**: one `202` answer for every address, no session from registration, notice to the address owner (hourly cooldown, audited), password hash before the branch, mail queued after the reply; 6 new regression tests |
 | `b2bc5a0` | **Registration enumeration fixed**: one `202` answer for every address, no session from registration, notice to the address owner (hourly cooldown, audited), password hash before the branch, mail queued after the reply; 6 new regression tests |
-| (this commit) | **Backup/restore drill** (`deploy/restore.sh`, 10 tests driving the API and the engine against a restored database) and **security headers** (`backend/security_headers.py`, CSP + framing + permissions on every response, mirrored at the proxy, 10 tests, zero CSP violations across the browser smoke) |
+| `5c7ea85` | **Backup/restore drill**: `deploy/restore.sh` (verify before writing, refuse to guess a target, atomic placement) and 10 tests that restore a snapshot and drive the API and the ingestion engine against it |
+| `b74e7ca` | **Security headers**: `backend/security_headers.py` (CSP with `script-src 'self'`, `frame-ancestors 'none'`, `object-src`/`base-uri 'none'`, denied page permissions, documented Leaflet/tile exceptions), applied to every response including the middleware's own 403/413/429 refusals, mirrored byte for byte in `deploy/Caddyfile`; 10 tests plus zero `securitypolicyviolation` events in the browser smoke |
+| `7458b82` | **Release gate extended** to the headers, so a deployment cannot pass while serving no CSP (12 checks against the live pilot) |
 
-Test suite: **125 passed** (`python -m pytest -q`). Browser smokes: full-stack (including the
-confirmation banner and recovery entry point) and static-preview both pass locally and in CI.
+Test suite: **125 passed** (`python -m pytest -q`). Browser smokes: full-stack (confirmation
+banner, recovery entry point, registration→sign-in, and a check that the enforced
+Content-Security-Policy produced no violations) and static-preview both pass locally and in CI.
+CI also runs the release gate (`deploy/verify-live.sh`) against the smoke server on every push.
 
 ## Waiting on the owner
 

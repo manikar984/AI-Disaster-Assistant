@@ -1,5 +1,28 @@
 # Verification record
 
+## 2026-10-13 — full sweep after the enumeration, restore-drill and header work
+
+Every command below was run on the final commit of this set (`7458b82`), in this
+sandbox, against the code as pushed.
+
+| Check | Actual result |
+|---|---|
+| `python -m pytest -q` | **125 passed**, 1 third-party deprecation warning (Starlette/httpx `TestClient`) |
+| `pip-audit -r requirements.lock` | No known vulnerabilities found |
+| `npm audit --prefix web` | 0 vulnerabilities |
+| `npm run build --prefix web` | Passed: `index-et3bNit-.js` 487.88 kB (151.75 kB gzip), `index-dz-O9zzX.css` 40.90 kB (12.73 kB gzip) |
+| `PYTHON=.venv/bin/python bash .github/scripts/browser-smoke.sh` | Passed: browser suite under the enforced CSP with **zero violations**, then the release gate against the same live server — **12 passed, 0 failed** |
+| `npm run test:static --prefix web` | Passed |
+| `bash deploy/verify-live.sh http://127.0.0.1:8000` (live pilot, API + worker) | **12 passed, 0 failed, exit 0** — health, database, worker heartbeat (age 1 s), policy, feeds, sample provenance, frontend, and the five header checks |
+| `bash deploy/verify-live.sh http://127.0.0.1:1` (nothing listening) | 13 failures, `Release gate NOT met`, exit 13 |
+| Live pilot registration probe | new address and existing address both `202` with the identical body; `login` `200`; `/` carries the CSP, `X-Frame-Options: DENY` and `nosniff` |
+| CI (GitHub Actions, push **and** pull_request) | Green on `b2bc5a0`, `2c5f3ef` and `7458b82` — runs `38445483717`/`38445493780`, `38446546887`/`38446554845`, `38446713777`/`38446723900` |
+
+No regressions were found by the sweep, and no test was weakened to reach it: the
+count went 99 → 105 → 125 across these three tasks, with the changed tests
+(registration now signing in explicitly, the release gate's failure count) made
+stricter rather than looser.
+
 ## 2026-10-13 — backup/restore drill and browser security headers
 
 | Check | Actual result |
