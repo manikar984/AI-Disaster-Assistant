@@ -53,10 +53,30 @@ India. If the console flags a region as short of Always Free capacity, believe i
 and pick the other; nearby regions can be worse for you on latency *and* no better
 on capacity.
 
+**If signup fails** — these are the documented causes, in the order they bite
+people in India:
+
+| What you see | What it means | What to do |
+|---|---|---|
+| "Error processing transaction" / "We're unable to complete your sign up" at the card step | Oracle's payment gateway (Cybersource) declined the authorisation *before* your account was created. Almost always a card-type or card-controls problem | Check the card: **no RuPay** (not an option), no prepaid/virtual/single-use cards, and a debit card is only accepted if it carries a Visa/Mastercard logo. Then open your bank's app and switch **International transactions** and **Online/e-commerce** on for that card — in India these are off by default and the authorisation hold fails silently without them |
+| The same error with a card you know works | Billing details are compared to the card issuer's record, character for character | Copy the billing address from the card statement — casing, abbreviations, line breaks, all of it — into Address Line 1. Match the name as printed on the card, including a middle name if the statement has one (the name fields can be edited on the card form itself) |
+| Repeated failures on retry | Anti-abuse throttling: too many attempts from the same IP/device | Wait **at least 24 hours**, then retry from a different network and a different browser in a private window with extensions disabled. No VPN or proxy at any point |
+| Card issuer says the card is fine, Oracle still refuses | The fraud rules can reject a legitimate card with no explanation | Email **oraclehelp_ww@oracle.com** *from the address you signed up with*, quote the exact error and the date/time, list what you already verified, and attach a screenshot. Users report getting unblocked within ~24h. The draft in `docs/DEPLOY-SESSION.md` is written for this |
+| Everything looks right and it works elsewhere | Nothing to fix — it is genuinely intermittent | Try again later; the same card that failed has succeeded weeks later for many people |
+| Account created, then "Out of host capacity" when launching the instance | This is the **VM**, not signup — a different problem | See the capacity note below: retry, another availability domain, or the AMD micro fallback |
+
+**Do not** create a second account, use someone else's card, or sign up twice with a
+different email to work around this: Oracle matches email, phone **and** card, and
+duplicate accounts are how people get permanently locked out.
+
 **Capacity is the real risk, not cost.** Many new accounts meet "Out of host
 capacity" when launching an A1 instance. Options in order of preference: retry
 (the pool frees up constantly, often within hours), try another availability
-domain, or — only as a deliberate decision you make with the trade-offs known —
+domain, take the **AMD micro fallback** (Always Free includes two
+`VM.Standard.E2.1.Micro` instances: 1 OCPU / 1 GB each — the app itself is light
+(FastAPI + SQLite + one worker ≈ 200 MB), so one micro plus 2 GB swap can host it;
+build the frontend on your laptop instead of on the VM, and expect it to be
+slower), or — only as a deliberate decision you make with the trade-offs known —
 upgrade to Pay-As-You-Go, which removes the hard free cap and therefore can bill
 you if anything exceeds the Always Free limits. **Do not upgrade without talking
 to me first**; if you do, set a budget alert before creating anything.

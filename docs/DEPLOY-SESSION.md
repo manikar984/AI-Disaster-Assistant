@@ -25,7 +25,7 @@ once a stage is proven.
 | # | Stage | State | Evidence |
 |---|---|---|---|
 | 0 | Plan approved; repository prepared | **done** | `docs/DEPLOY-CHECKLIST.md`; commits `e9cf9b4`… |
-| 1 | Owner prerequisites: Oracle account, SSH key, hostname, SMTP account | **in progress — waiting on the owner** | this file, §1 record |
+| 1 | Owner prerequisites: Oracle account, SSH key, hostname, SMTP account | **in progress — the owner's first signup attempt failed; triage in `docs/DEPLOY-CHECKLIST.md` §1, exact error awaited** | this file, §1 record |
 | 2 | VM created, networking, reserved IP, DNS record | not started | |
 | 3 | Provisioned: packages, service account, units, proxy config | not started | |
 | 4 | Application installed in `/opt/disaster-assistant`, frontend built | not started | |
@@ -65,12 +65,55 @@ Waiting on the owner. To be filled in as each item is confirmed:
 | Item | Value to record | State |
 |---|---|---|
 | Oracle home region chosen | e.g. `ap-hyderabad-1` | pending |
-| Oracle tenancy created | yes/no + welcome email received | pending |
+| Oracle tenancy created | yes/no + welcome email received | **first attempt failed** — the failure point and the verbatim error message are not yet recorded here |
 | Always Free instance shape available | A1 visible in console, or capacity error text | pending |
 | SSH key generated | `~/.ssh/id_ed25519.pub` fingerprint only | pending |
 | Hostname | the DuckDNS subdomain or domain | pending |
 | SMTP provider account ready | provider name + verified sender address (never the password) | pending |
 | Pay-As-You-Go upgrade | **declined unless the owner says otherwise** | pending |
+
+### Draft: email to Oracle support if signup keeps failing
+
+Send **from the address you signed up with**, attach a screenshot of the error,
+and change the bracketed parts. Nothing here is a secret, so it is safe to keep in
+this repository.
+
+```text
+Subject: Unable to complete Oracle Cloud Free Tier signup - "Error processing
+transaction" [<date>]
+
+Hello,
+
+I am unable to create my Oracle Cloud Free Tier account and would like your help.
+The signup fails at the payment-verification step with:
+
+    "<paste the exact error text here>"
+
+Attempted on <date and time, with time zone>, from <city, country>, using <browser>.
+
+I have already checked the usual causes:
+
+  * The card is a physical <card brand> <credit/debit> card in my own name, issued
+    in India. It is not prepaid, virtual or single-use.
+  * International and online/e-commerce transactions are enabled for the card,
+    confirmed with the issuing bank.
+  * The billing address and name I entered match the card statement exactly,
+    including the middle name.
+  * No VPN or proxy was used, and browser extensions were disabled in a private
+    window.
+  * The temporary authorisation hold of <amount> appeared on the card and was
+    reversed, so the card itself is working.
+
+Could you please check whether my signup attempt is blocked on your side, and
+clear it if so? I will then retry with the same email address
+(<the address you signed up with>).
+
+Thank you,
+<name>
+```
+
+Expect ~24 hours for a first reply; the report from other users is that support
+can lift the block and let the same email sign up again.
 
 ---
 
