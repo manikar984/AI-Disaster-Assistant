@@ -46,6 +46,8 @@ Set the same `USGS_ENABLED` value for API and worker. See `.env.example` and the
 python -m pytest -q
 npm run build --prefix web
 npm audit --prefix web
+# Static-preview smoke (built frontend served with no API, as on GitHub Pages):
+npm run test:static --prefix web
 # Optional dependency audit:
 pip install pip-audit
 pip-audit -r requirements.lock
@@ -65,10 +67,19 @@ See [actual verification results](docs/VERIFICATION.md), not just these commands
 | `backend/db.py`, `migrations/` | Persistence and versioned SQL schema |
 | `backend/cli.py` | Explicit samples, admin provisioning, password reset |
 | `web/src/` | React dashboard, map, account and admin workflows |
-| `tests/`, `web/tests/` | Backend and browser integration verification |
+| `tests/`, `web/tests/` | Backend tests, full-stack browser smoke, static-preview smoke |
+| `.github/scripts/` | CI smoke runner with annotation diagnostics |
 | `docs/AUDIT.md` | Actual repository findings and implementation plan |
 | `docs/ARCHITECTURE.md` | Contracts, trust model and technology decisions |
 | `docs/OPERATIONS.md` | Setup, deployment, security, costs, retention, remaining work |
+
+## GitHub Pages
+
+The Pages workflow publishes a **static demonstration build** (project-path assets,
+no API). It cannot sign anyone in or show live incidents, and it now says so on
+the page instead of rendering an unexplained empty dashboard. The full
+application requires a host that runs the API and the worker — see
+[docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 ## Preserved legacy prototype
 `prototype.py`, `twitter_api.py`, `disaster_data.json`, `disaster_map.html` and the original presentation remain. The prototype is a separate legacy demonstration, not the new service. Install `requirements-legacy.txt` if you need to run it. It was inspected, but not runtime-verified here. Fixture overwrites, hardcoded credential, unsafe popup interpolation and misleading default coordinates were corrected.

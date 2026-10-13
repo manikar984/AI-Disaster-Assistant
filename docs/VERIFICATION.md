@@ -1,39 +1,82 @@
-# Verification record — 2026-10-13
+# Verification record
 
-## Executed successfully
+## 2026-10-13 — audit fixes on `arena/0aaecd40-ai-disaster-assistant`
+
+Environment: Python 3.11.2, Node 22.22.3, npm 10.9.8, no Docker, outbound
+network restricted to package and GitHub hosts (so no live feed, SMTP or
+`github.io` fetch).
+
+| Check | Command | Actual result |
+|---|---|---|
+| Backend suite | `python -m pytest -q` | **43 passed**, 1 Starlette/httpx deprecation warning |
+| Python dependency audit | `pip-audit -r requirements.lock` | No known vulnerabilities |
+| npm audit | `npm audit --prefix web` | 0 vulnerabilities |
+| Frontend build | `npm run build --prefix web` | Passed (`tsc -b` + Vite; 480.39 kB JS / 39.69 kB CSS) |
+| Pages base build | `npm run build --prefix web -- --base=/AI-Disaster-Assistant/` | `index.html` references `/AI-Disaster-Assistant/assets/…`, no root-relative asset URLs |
+| Full-stack browser smoke | `bash .github/scripts/browser-smoke.sh` | Passed (desktop feed, map, filters, evidence, auth, saved location, report, deletion, mobile nav, no overflow, no page errors) |
+| Static-preview browser smoke | `npm run test:static --prefix web` | Passed (discloses the missing backend, shows no incidents, blocks misleading actions) |
+| CI “Checks” | run [38434775564](https://github.com/manikar984/AI-Disaster-Assistant/actions/runs/38434775564) | **All 10 steps pass**, including both browser smokes |
+
+### CI browser failure: root cause and evidence
+
+The reported failure was reproduced from CI evidence instead of guesswork. Raw
+job logs and artifacts are unreachable from this network
+(`results-receiver.actions.githubusercontent.com`, `*.blob.core.windows.net`
+both refuse the connection), so the smoke test was first made diagnosable: it
+prints a checkpoint per phase, reports browser channel, page/console errors,
+failed requests, layout numbers and a screenshot, and the runner turns the test
+log tail into check annotations (readable through `api.github.com`) plus an
+uploaded artifact.
+
+Annotations from run `38434082831` identified the fault exactly:
+
+```
+error: Search for a sample location returns exactly one row / 5 !== 1
+```
+
+The test typed a search term and read `.incident-row` count immediately, racing
+the re-fetch: CI measured the unfiltered sample list, the slower local machine
+measured the filtered list. The count is now awaited deterministically
+(`waitForRowCount`) and the row content is still asserted — the check was fixed,
+not weakened. CI has been green on every run since.
+
+### GitHub Pages
+
+Verified locally that the Pages workflow build (`--base=/AI-Disaster-Assistant/`)
+emits correct project-path asset URLs and the application build stays at `/`.
+The hosted static build has no API — `/api/*` returns a GitHub Pages HTML 404 —
+so the frontend now detects the unreachable backend and states it plainly, with
+unknown statistics, no sample shortcut and no fabricated records. `github.io`
+itself cannot be fetched from this sandbox, so the rendered public page is
+**not** independently verified here.
+
+### Still unverified (unchanged)
+
+* Live USGS (or any external feed) fetch: blocked by sandbox egress rules;
+  adapter tests use mocked HTTP responses.
+* Real SMTP delivery, browser push, SMS and WhatsApp: no credentials or
+  providers configured. Only the outbox logic and a fake SMTP interface are
+  exercised.
+* Docker/Compose build and run: no Docker daemon available.
+* No durable public deployment, HTTPS/cookie verification, load test,
+  penetration test, accessibility audit or disaster-recovery rehearsal.
+* No measured latency, uptime or classification accuracy — none is claimed.
+
+## 2026-10-13 — pilot implementation (previous session, superseded above)
 
 | Check | Actual result |
 |---|---|
-| `python -m pytest -q` | **43 passed**. One upstream TestClient deprecation warning recommending httpx2; no failing tests. |
-| `npm run build --prefix web` | TypeScript check + Vite production build passed. |
-| `npm run test:browser --prefix web` | Headless Chromium desktop/mobile integration smoke passed against a separate, disposable database. |
-| `pip-audit -r requirements.lock` | No known vulnerabilities reported for the resolved Python dependency set. |
-| `npm audit --prefix web` | 0 vulnerabilities reported. |
-| `git diff --check` | Passed after removing legacy trailing whitespace. |
-| Python compile check | Backend and both legacy Python files compile successfully. Legacy runtime dependencies not exercised. |
-| Preview HTTP smoke | `/api/health` returns `{"status":"ok","version":"0.1.0"}`; browser loaded built frontend and API. |
+| `python -m pytest -q` | 43 passed |
+| `npm run build --prefix web` | Passed |
+| `npm run test:browser --prefix web` | Passed locally |
+| `pip-audit -r requirements.lock`, `npm audit --prefix web` | Clean |
+| `git diff --check`, Python compile check | Passed |
+| Preview HTTP smoke (`/api/health`) | `{"status":"ok","version":"0.1.0"}` |
 
-Browser smoke exercised feed, sample selection, map render, incident evidence, search, registration, account session, save/remove location, community report submission, account deletion, 390px mobile navigation and no horizontal overflow on the mobile sources page. Captured desktop/mobile dashboard rendering for local inspection. No browser JavaScript exceptions during the smoke workflow. Initial Chromium launch lacked NSS system libraries; the test now extracts the runtime libraries included in the npm browser package. Browser web-security disabling flags are removed from the launch arguments.
-
-Backend coverage includes ownership of locations/notifications, unauthenticated/admin access denial, CSRF origin/header checks, registration/logout/login, password salt verification, input/body validation, duplicate suppression, sample isolation, geographic matching, freshness/severity/trust gates, official revision handling, community grouping without trust escalation, nearby aftershock separation, failed and malformed source handling, audit/review/resolution, consent withdrawal, retry and mocked SMTP acceptance.
-
-## Not verified / not claimed
-
-* Real USGS feed access is blocked by this environment's outbound-host restriction. Adapter tests mock HTTP responses; these are not evidence of successful live fetching.
-* Real SMTP delivery is not configured. Tests exercise a fake SMTP server interface and genuine missing-configuration retry behavior; no actual email was delivered.
-* Arena exposes a preview for the running service on port 8000. This is **not a durable production deployment**. The externally proxied HTTPS URL, domain configuration and production secure-cookie flow were not independently verified.
-* Docker/Compose build and startup were not executed. Configuration is provided for operator validation.
-* CI workflow is written but has not run on GitHub; local tests passing do not imply GitHub checks passed.
-* No load test, penetration test, disaster recovery rehearsal, formal accessibility audit, statistical ML evaluation, push/SMS/WhatsApp testing or measured production latency/SLO.
-* Sample data has no reliable original publication times. Fixture timestamps and approximate region coordinates are disclosed; samples are never used as live evidence.
-
-## Milestone status
-
-1. **Audit complete:** all six original files examined, apparent exposed credential identified/removed, working concepts preserved.
-2. **Pilot architecture complete:** data model, contracts, trust/security boundary, deployment approach documented. PostgreSQL/PostGIS scale-out deferred.
-3. **Core backend implemented for pilot scope:** USGS adapter, static import, community reports, persistence, heuristic/structured screening and grouping. Broader sources, trained NLP, entity extraction and automatic corroboration are not complete.
-4. **Website implemented/tested for pilot scope:** responsive dashboard/map/details, polling, account and preferences. Recovery is operator-assisted; clustering and affected-area overlays deferred.
-5. **Notifications partial:** in-app fully exercised; SMTP outbox tested with mocks, not real provider; push/SMS/WhatsApp absent.
-6. **Administration partial:** severity/status review, audit, source/delivery inspection. Merge, type correction and full moderation/escalation workflows absent.
-7. **Pilot checks passed:** listed tests/build/scans. Production security/reliability certification has not occurred.
-8. **Deployment guide/configuration delivered; local preview running. Public production deployment not completed.**
+Backend coverage: ownership of locations/notifications, unauthenticated/admin
+access denial, CSRF origin/header checks, registration/logout/login, password
+salt verification, input/body validation, duplicate suppression, sample
+isolation, geographic matching, freshness/severity/trust gates, official
+revision handling, community grouping without trust escalation, aftershock
+separation, failed and malformed source handling, audit/review/resolution,
+consent withdrawal, retry and mocked SMTP acceptance.
