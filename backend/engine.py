@@ -308,7 +308,7 @@ def qualify_notifications(db):
         eligible = fresh and i['lat'] is not None and i['verification'] in ('Corroborated', 'Officially Confirmed')
         if not eligible and not (previous and i['verification'] in ('Resolved', 'Disputed')):
             continue
-        for user in db.execute('SELECT id FROM users').fetchall():
+        for user in db.execute('SELECT id,email_verified FROM users').fetchall():
             locations = db.execute('SELECT * FROM locations WHERE user_id=?', (user['id'],)).fetchall()
             matches = [
                 l
@@ -338,7 +338,10 @@ def qualify_notifications(db):
                     "VALUES (?,'in-app','delivered',?,?)",
                     (cur.lastrowid, stamp, stamp),
                 )
-                if any(l['email_enabled'] for l in (matches or locations)):
+                # Email requires consent *and* a confirmed address: an unconfirmed
+                # address may belong to someone who never signed up. The in-app
+                # notification above is unaffected.
+                if user['email_verified'] and any(l['email_enabled'] for l in (matches or locations)):
                     db.execute(
                         "INSERT INTO deliveries(notification_id,channel,status,next_attempt) VALUES (?,'email','pending',?)",
                         (cur.lastrowid, stamp),

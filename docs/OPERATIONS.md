@@ -123,6 +123,26 @@ reach a log line, an API response or the `deliveries.last_error` column.
 * Worker polls USGS with exponential failure backoff capped at one hour. Provider-specific Retry-After scheduling is not yet implemented. Bad records are counted/skipped; malformed feed errors are exposed, never replaced by samples. Only a fixed official feed URL is fetched (no user-driven SSRF fetches).
 * Use process supervisor/container restart plus external health monitoring. `/api/health` only tests API/database, not worker liveness; stale source timestamps are the current worker-failure signal. Add heartbeat metrics before production.
 
+## Account security operations
+
+* A new account is usable immediately but receives **email** alerts only after it
+  confirms its address (24-hour single-use link). In-app notifications are not
+  gated. `GET /api/me` returns `email_verified` for the UI banner.
+* A user who cannot confirm or has lost their password can use
+  "Send a recovery link" (1-hour single-use link, revokes all sessions on use).
+  If email is not configured or the mailbox is unreachable, an operator can still
+  run `python -m backend.cli reset-password --email <address>` after verifying the
+  person's identity out of band.
+* "Sign out everywhere" (`POST /api/auth/logout-all`) revokes every session for
+  the account, including the current one.
+* Tune `SESSION_DAYS` (absolute) and `SESSION_IDLE_DAYS` (inactivity) in the
+  environment file; `PUBLIC_BASE_URL` (or `APP_ORIGIN`) must be the public HTTPS
+  origin or the emailed links will point at the wrong host.
+* Emailed links never contain a password, and token values exist only in the
+  email and are stored as hashes. Logs never contain tokens or credentials.
+* Known limitation: registration replies 409 for an address that already has an
+  account, so address existence is testable — see `docs/ARCHITECTURE.md`.
+
 ## Privacy, retention and backups
 Minimize collection: email, scrypt password, explicit saved coordinates, consent and delivery history. No background GPS. Private tables are user-scoped. Admin report/audit inspection is privileged. Account deletion removes sessions, locations, notifications and delivery rows; reports lose user linkage/raw payload identifiers. Public report text itself is retained, so warn users not to put personal information there. A moderation/removal process for sensitive report text remains necessary.
 

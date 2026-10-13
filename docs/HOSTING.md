@@ -9,9 +9,9 @@ and a tested nightly SQLite backup. Nothing has been created in Oracle yet — t
 account, the VM and the mail account are the owner's steps, and the runbook
 instructs exactly what to run.
 
-**Status: recommendation only — nothing has been created, and no cost has been
-incurred.** Items marked *(verify at signup)* are published prices that must be
-re-confirmed on the provider's checkout page before committing.
+**Nothing has been created in Oracle Cloud and no cost has been incurred.**
+Figures in the comparison marked *(verify at signup)* are published prices that
+must be re-confirmed on the provider's checkout page before committing.
 
 ## What this application needs from a host
 

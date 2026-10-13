@@ -29,6 +29,8 @@ DEFAULT_TIMEOUT = 20
 SECURITY_MODES = ('starttls', 'ssl', 'plain')
 ALERT_SUBJECT = 'Disaster Assistant — incident update (not a government warning)'
 TEST_SUBJECT = 'Disaster Assistant — SMTP verification message (not a government warning)'
+VERIFY_SUBJECT = 'Confirm your email address for disaster alerts'
+RECOVERY_SUBJECT = 'Reset your disaster-assistant password'
 
 
 class MailError(RuntimeError):
@@ -139,15 +141,49 @@ def send_alert(recipient, body, notification_id):
     return send(message)
 
 
-def send_verification(recipient, detail=''):
+def send_probe(recipient, detail=''):
     """Send the operator's own test message, clearly marked as a test."""
     body = (
         'This is a test message sent by the disaster-assistant operator command.\n\n'
         'Nothing has happened: there is no incident behind this message. It exists to prove\n'
         'that the configured SMTP provider accepts and delivers mail from this deployment.\n'
         'Real alerts are labelled "incident update" and always carry the incident, its\n'
-        'verification state and a link to official guidance.\n'
+        'verification state and where to find official guidance.\n\n'
+        'This is not an official emergency warning service.\n'
     )
     if detail:
         body += f'\nDiagnostic detail:\n{detail}\n'
     return send(build_message(recipient, TEST_SUBJECT, body, message_id='<smtp-verification@disaster-assistant.local>'))
+
+
+def send_account_verification(recipient, url):
+    """Ask a new account holder to confirm their own address.
+
+    Until this succeeds the account receives in-app notifications but no email,
+    so a mistyped address can never be signed up for alerts by someone else.
+    """
+    body = (
+        'Someone asked to receive disaster alerts at this address.\n\n'
+        'Confirm it by opening this link (valid for 24 hours, usable once):\n'
+        f'{url}\n\n'
+        'Until you confirm, the account receives in-app notifications only. Email alerts are\n'
+        'never sent to an unconfirmed address. If you did not create this account, ignore this\n'
+        'message: no alerts will be sent here and the address can be removed by replying to the\n'
+        'operator of this deployment.\n\n'
+        'Disaster Assistant is not an official emergency warning service. Always follow your\n'
+        'local authorities.\n'
+    )
+    return send(build_message(recipient, VERIFY_SUBJECT, body, message_id='<account-verify@disaster-assistant.local>'))
+
+
+def send_password_recovery(recipient, url):
+    """Single-use password reset link. Never reveals whether the account exists."""
+    body = (
+        'A password reset was requested for this address.\n\n'
+        'Choose a new password by opening this link (valid for 1 hour, usable once):\n'
+        f'{url}\n\n'
+        'Setting a new password signs out every device that is currently signed in. If you did\n'
+        'not request this, ignore the message: nothing changes and the link expires by itself.\n\n'
+        'Disaster Assistant is not an official emergency warning service.\n'
+    )
+    return send(build_message(recipient, RECOVERY_SUBJECT, body, message_id='<password-recovery@disaster-assistant.local>'))

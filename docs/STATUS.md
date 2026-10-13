@@ -25,10 +25,11 @@ verified there is marked as not claimed.
 | `95fc7ff` | Geographic-precision defect found in the live pilot and fixed (migration 003 + API guard + tests) |
 | `0a93cca` | **Email channel provable**: `backend/mailer.py`, `email-check` command, 8 real-SMTP tests, `docs/OPERATIONS.md` proof procedure |
 | (this commit) | `docs/HOSTING.md` recommendation, this status board, README/`.env.example` refresh |
-| (next commit) | **Deployment assets for the approved host**: `deploy/` (provisioning script, systemd units, Caddy config, tested backup script) and `docs/DEPLOYMENT.md` |
+| (previous commit) | **Deployment assets for the approved host**: `deploy/` (provisioning script, systemd units, Caddy config, tested backup script) and `docs/DEPLOYMENT.md` |
+| (this commit) | **Account security**: email confirmation, single-use expiring recovery links, session listing, revoke-all, idle expiry, 12 new tests and the matching UI (banner, resend, forgot/reset, sign-out-everywhere, session list) |
 
-Test suite: **66 passed** (`python -m pytest -q`). Browser smokes: full-stack and
-static-preview both pass locally and in CI.
+Test suite: **86 passed** (`python -m pytest -q`). Browser smokes: full-stack (including the
+confirmation banner and recovery entry point) and static-preview both pass locally and in CI.
 
 ## Waiting on the owner
 
@@ -48,18 +49,18 @@ static-preview both pass locally and in CI.
 
 Ordered by risk closed per unit of effort, from `docs/AUDIT.md` §9:
 
-1. Account security: email verification, single-use expiring recovery tokens
-   (SMTP-gated, testable against the SMTP fixture), session list + revoke-all.
-2. Content-Security-Policy and `frame-ancestors` headers with a documented
-   threat-model update.
-3. Retention/backup/restore tooling with a test that restores a database from a
-   backup and verifies row counts.
-4. Live updates over SSE with reconnect/backoff and a polling fallback, plus
+1. Content-Security-Policy and `frame-ancestors` headers with a documented
+   threat-model update (the proxy already sends `frame-ancestors 'none'`).
+2. Retention/backup/restore tooling with a test that restores a database from a
+   backup and verifies row counts (the nightly snapshot script itself is tested).
+3. Live updates over SSE with reconnect/backoff and a polling fallback, plus
    explicit stale-data indicators in the feed.
-5. Administration: incident merge/split, type correction, moderation queue,
+4. Administration: incident merge/split, type correction, moderation queue,
    delivery replay — each audited.
-6. Frontend: incident routes, editable saved locations, place search, map
+5. Frontend: incident routes, editable saved locations, place search, map
    clustering, accessibility and keyboard-navigation tests.
+6. Remove the registration enumeration leak (answer 201 and email the existing
+   holder instead of 409) once the product copy is updated.
 
 ## Explicitly not claimed
 

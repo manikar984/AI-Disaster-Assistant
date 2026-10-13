@@ -65,7 +65,7 @@ def _email_check(recipient):
         print('Name the mailbox that should receive the test: email-check --to you@example.org')
         return 1
     try:
-        code = mailer.send_verification(recipient, detail='Requested by the operator email-check command.')
+        code = mailer.send_probe(recipient, detail='Requested by the operator email-check command.')
     except mailer.MailError as exc:
         print(f'Delivery failed: {exc}')
         print('The message was not sent. Nothing in this output contains the SMTP password.')

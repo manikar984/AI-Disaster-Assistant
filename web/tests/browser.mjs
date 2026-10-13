@@ -28,9 +28,31 @@ try {
   checkpoint('registration');
   await page.getByRole('button', { name: 'Sign in', exact: true }).first().click();
   await page.getByRole('button', { name: 'Create an account', exact: true }).click();
-  await page.getByLabel('Email address').fill(`browser-${Date.now()}@example.com`);
+  const account = `browser-${Date.now()}@example.com`;
+  await page.getByLabel('Email address').fill(account);
   await page.getByLabel('Password', { exact: true }).fill('Browser-test-password-47');
   await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  await page.getByRole('button', { name: 'My account', exact: true }).waitFor();
+  // A new account starts unconfirmed: the dashboard must say so and offer the resend.
+  await page.getByRole('status').filter({ hasText: 'Confirm your email address' }).waitFor();
+  assert.equal(
+    await page.getByRole('button', { name: 'Resend link', exact: true }).count(),
+    1,
+    'An unconfirmed account can request the confirmation link again',
+  );
+  checkpoint('password recovery entry point');
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign in', exact: true }).first().click();
+  await page.getByRole('button', { name: 'Send a recovery link', exact: true }).click();
+  await page.getByRole('heading', { name: 'Reset your password' }).waitFor();
+  await page.getByLabel('Email address').fill(`nobody-${Date.now()}@example.com`);
+  await page.getByRole('button', { name: 'Send recovery link', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'If that address has an account' }).waitFor();
+  // The answer is identical for an address with no account: no enumeration.
+  await page.getByRole('button', { name: 'Sign in', exact: true }).first().click();
+  await page.getByLabel('Email address').fill(account);
+  await page.getByLabel('Password', { exact: true }).fill('Browser-test-password-47');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).last().click();
   await page.getByRole('button', { name: 'My account', exact: true }).waitFor();
   await page.getByRole('button', { name: 'My account', exact: true }).click();
   await page.getByRole('button', { name: 'Add location', exact: true }).click();

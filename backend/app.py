@@ -1,3 +1,4 @@
+import logging
 import os
 import secrets
 import sqlite3
@@ -14,9 +15,11 @@ from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 from .db import HEARTBEAT_KEY, connect, get_runtime_state, migrate, now
-from .security import current_user, admin_user, password_hash, password_ok, session_hash
+from .security import SESSION_DAYS, current_user, admin_user, password_hash, password_ok, session_hash
 from .engine import CATEGORIES, GUIDANCE, LEVELS, VERIFICATIONS, ingest, qualify_notifications
 from .poller import source_rows, source_state_summary
+from . import mailer
+from .tokens import consume as consume_token, issue as issue_token
 from .verification import RULE as CORROBORATION_RULE, assess as assess_evidence
 
 
@@ -85,6 +88,19 @@ class Credentials(StrictModel):
     password: str = Field(min_length=12, max_length=128)
 
 
+class TokenOnly(StrictModel):
+    token: str = Field(min_length=20, max_length=200)
+
+
+class EmailOnly(StrictModel):
+    email: EmailStr
+
+
+class PasswordReset(StrictModel):
+    token: str = Field(min_length=20, max_length=200)
+    password: str = Field(min_length=12, max_length=128)
+
+
 class Location(StrictModel):
     name: str = Field(min_length=2, max_length=100)
     lat: float = Field(ge=-90, le=90)
@@ -109,9 +125,41 @@ class Review(StrictModel):
 
 def create_session(db, response, user_id):
     token = secrets.token_urlsafe(32)
+    stamp = datetime.now(timezone.utc)
     db.execute('DELETE FROM sessions WHERE expires_at<?', (now(),))
-    db.execute('INSERT INTO sessions VALUES (?,?,?)', (session_hash(token), user_id, (datetime.now(timezone.utc)+timedelta(days=7)).isoformat()))
-    response.set_cookie('session', token, httponly=True, secure=os.getenv('COOKIE_SECURE', 'false').lower() == 'true', samesite='strict', max_age=604800, path='/')
+    db.execute(
+        'INSERT INTO sessions(token,user_id,expires_at,created_at,last_seen_at) VALUES (?,?,?,?,?)',
+        (session_hash(token), user_id, (stamp + timedelta(days=SESSION_DAYS)).isoformat(), stamp.isoformat(), stamp.isoformat()),
+    )
+    response.set_cookie(
+        'session', token, httponly=True,
+        secure=os.getenv('COOKIE_SECURE', 'false').lower() == 'true',
+        samesite='strict', max_age=int(timedelta(days=SESSION_DAYS).total_seconds()), path='/',
+    )
+
+
+def account_link(kind, token):
+    """Absolute link for an emailed token; the browser page redeems it."""
+    base = (os.getenv('PUBLIC_BASE_URL') or os.getenv('APP_ORIGIN') or 'http://localhost:5173').rstrip('/')
+    return f'{base}/?{kind}={token}'
+
+
+def deliver_token_email(kind, recipient, token):
+    """Send a verification or recovery link. Never raises: email may be off."""
+    try:
+        if kind == 'verify':
+            mailer.send_account_verification(recipient, account_link('verify', token))
+        else:
+            mailer.send_password_recovery(recipient, account_link('reset', token))
+    except Exception:
+        logging.getLogger('disaster-assistant').warning('account email not delivered: kind=%s reason=unavailable', kind)
+        return 'unavailable'
+    return 'sent'
+
+
+def generic_reply():
+    """Identical answer whether or not the address has an account."""
+    return {'ok': True, 'message': 'If that address has an account, a message has been sent to it.'}
 
 
 @app.get('/api/health')
@@ -123,13 +171,102 @@ def health():
 
 @app.post('/api/auth/register', status_code=201)
 def register(data: Credentials, response: Response):
+    email = str(data.email).lower()
     with connect() as db:
         try:
-            cursor = db.execute('INSERT INTO users(email,password,created_at) VALUES (?,?,?)', (str(data.email).lower(), password_hash(data.password), now()))
+            cursor = db.execute('INSERT INTO users(email,password,created_at) VALUES (?,?,?)', (email, password_hash(data.password), now()))
         except sqlite3.IntegrityError:
             raise HTTPException(409, 'Unable to register with these details')
-        create_session(db, response, cursor.lastrowid)
-    return {'ok': True}
+        user_id = cursor.lastrowid
+        create_session(db, response, user_id)
+        db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user_id, 'register', 'Account created; email awaiting confirmation', now()))
+        token = issue_token(db, user_id, 'verify')
+    delivery = deliver_token_email('verify', email, token)
+    return {'ok': True, 'email_verified': False, 'verification_email': delivery}
+
+
+@app.post('/api/auth/verify')
+def verify_email(data: TokenOnly):
+    """Redeem an emailed confirmation token. Single use, 24-hour validity."""
+    with connect() as db:
+        user_id = consume_token(db, 'verify', data.token)
+        if user_id is None:
+            raise HTTPException(400, 'That confirmation link is invalid or has expired')
+        db.execute('UPDATE users SET email_verified=1, email_verified_at=? WHERE id=?', (now(), user_id))
+        email = db.execute('SELECT email FROM users WHERE id=?', (user_id,)).fetchone()['email']
+        db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user_id, 'verify-email', 'Address confirmed by the account holder', now()))
+    return {'ok': True, 'email': email, 'email_verified': True}
+
+
+@app.post('/api/auth/resend-verification', status_code=202)
+def resend_verification(data: EmailOnly):
+    """Re-issue a confirmation link. The answer never reveals whether the account exists."""
+    email = str(data.email).lower()
+    with connect() as db:
+        row = db.execute('SELECT id,email_verified FROM users WHERE email=?', (email,)).fetchone()
+        if row and not row['email_verified']:
+            token = issue_token(db, row['id'], 'verify')
+    if row and not row['email_verified']:
+        deliver_token_email('verify', email, token)
+    return generic_reply()
+
+
+@app.post('/api/auth/forgot', status_code=202)
+def forgot_password(data: EmailOnly):
+    """Start password recovery. Always the same answer, so accounts cannot be enumerated."""
+    email = str(data.email).lower()
+    with connect() as db:
+        row = db.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        if row:
+            token = issue_token(db, row['id'], 'reset')
+    if row:
+        deliver_token_email('reset', email, token)
+    return generic_reply()
+
+
+@app.post('/api/auth/reset')
+def reset_password(data: PasswordReset):
+    """Redeem a recovery token: single use, one hour, and signs out every device."""
+    with connect() as db:
+        user_id = consume_token(db, 'reset', data.token)
+        if user_id is None:
+            raise HTTPException(400, 'That recovery link is invalid or has expired')
+        db.execute('UPDATE users SET password=? WHERE id=?', (password_hash(data.password), user_id))
+        db.execute('DELETE FROM sessions WHERE user_id=?', (user_id,))
+        db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user_id, 'reset-password', 'Password recovered with a single-use link; all sessions revoked', now()))
+    return {'ok': True, 'message': 'Password updated. Sign in again on each device.'}
+
+
+@app.get('/api/sessions')
+def sessions(request: Request, user=Depends(current_user)):
+    """This account's own sessions. Session tokens are never returned, only a prefix."""
+    current = session_hash(request.cookies.get('session', ''))
+    with connect() as db:
+        rows = db.execute(
+            'SELECT token,created_at,last_seen_at,expires_at FROM sessions WHERE user_id=? '
+            'ORDER BY COALESCE(last_seen_at,created_at) DESC',
+            (user['id'],),
+        ).fetchall()
+    return [
+        {
+            'id': row['token'][:12],
+            'current': row['token'] == current,
+            'created_at': row['created_at'],
+            'last_seen_at': row['last_seen_at'],
+            'expires_at': row['expires_at'],
+        }
+        for row in rows
+    ]
+
+
+@app.post('/api/auth/logout-all')
+def logout_all(request: Request, response: Response, user=Depends(current_user)):
+    """Revoke every session for this account, including the current one."""
+    with connect() as db:
+        removed = db.execute('DELETE FROM sessions WHERE user_id=?', (user['id'],)).rowcount
+        db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user['id'], 'logout-all', f'{removed} sessions revoked by the account holder', now()))
+    response.delete_cookie('session', path='/')
+    return {'ok': True, 'sessions_revoked': removed}
 
 
 @app.post('/api/auth/login')

@@ -34,6 +34,16 @@ def subscribe(c, **kwargs):
     return c.post('/api/locations', json=dict(dict(name='Test home', lat=10., lon=76., radius=50, min_severity='High', email_enabled=False), **kwargs))
 
 
+def confirm_email(email='person@example.com'):
+    """Mark the address confirmed, exactly as redeeming the emailed link does.
+
+    Accounts start unconfirmed: email deliveries require confirmation, while
+    in-app notifications do not (tests/test_auth.py covers that rule directly).
+    """
+    with connect() as db:
+        db.execute('UPDATE users SET email_verified=1 WHERE email=?', (email,))
+
+
 def test_health_migration_idempotency(client):
     migrate()
     assert client.get('/api/health').json()['status'] == 'ok'
@@ -167,7 +177,7 @@ def test_admin_review_audit_and_resolution(client):
     client.patch(f'/api/admin/incidents/{id}',json={'verification':'Resolved','severity':'Low','note':'Resolution verified in controlled test fixture.'})
     assert len(client.get('/api/notifications').json())==2
     overview=client.get('/api/admin/overview').json()
-    assert len(overview['audit'])==2
+    assert len([row for row in overview['audit'] if row['action']=='review'])==2
 
 
 def test_account_deletion_cascades(client):
@@ -199,7 +209,7 @@ def test_ingestion_failure_visible_no_fallback(client,monkeypatch):
 
 
 def test_email_retry_not_fake_delivery(client):
-    signup(client);subscribe(client,email_enabled=True)
+    signup(client);confirm_email();subscribe(client,email_enabled=True)
     with connect() as db:
         ingest(db,record());qualify_notifications(db)
     deliver_email()
@@ -250,7 +260,7 @@ def test_notification_private_isolation(client):
 
 
 def test_email_cancelled_after_consent_removed(client):
-    signup(client);subscribe(client,email_enabled=True)
+    signup(client);confirm_email();subscribe(client,email_enabled=True)
     with connect() as db:
         ingest(db,record());qualify_notifications(db)
         db.execute('DELETE FROM locations')
@@ -260,7 +270,7 @@ def test_email_cancelled_after_consent_removed(client):
 
 
 def test_mock_smtp_acceptance(client,monkeypatch):
-    signup(client);subscribe(client,email_enabled=True)
+    signup(client);confirm_email();subscribe(client,email_enabled=True)
     with connect() as db:
         ingest(db,record());qualify_notifications(db)
     monkeypatch.setenv('SMTP_HOST','smtp.example.com')

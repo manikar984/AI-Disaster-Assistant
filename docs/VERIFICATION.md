@@ -1,5 +1,39 @@
 # Verification record
 
+## 2026-10-13 — account security: confirmation, recovery, session control
+
+| Check | Command | Actual result |
+|---|---|---|
+| Backend suite | `python -m pytest -q` | **86 passed** (was 74), 1 Starlette deprecation warning |
+| Account suite | `python -m pytest tests/test_auth.py -q` | **12 passed**, every link redeemed through the real SMTP fixture |
+| Frontend build | `npm run build --prefix web` | Passed (`index-DWvUO25B.js` 487.66 kB / `index-dz-O9zzX.css` 40.90 kB) |
+| Full-stack browser smoke | `bash .github/scripts/browser-smoke.sh` | Passed, incl. the new "registration shows the confirmation banner and the resend control" and "password recovery entry point answers identically for an unknown address" checkpoints |
+| Static-preview smoke | `npm run test:static --prefix web` | Passed |
+
+Observed behaviour, all with no mocks in the delivery path:
+
+* registering emails a 24-hour single-use confirmation link and reports
+  `verification_email: sent|unavailable` — never a delivery it cannot prove;
+* an unconfirmed account receives `in-app` deliveries only; after confirming, the
+  next qualifying incident also queues `email`;
+* confirmation tokens are single use, expire, and re-issuing one invalidates the
+  previous link; `resend-verification` and `forgot` return byte-identical bodies
+  for known and unknown addresses, and only the real account receives mail;
+* a recovery link sets the new password, signs out every device (the old cookie
+  gets 401, the old password is refused, the new one works) and cannot be replayed;
+* `GET /api/sessions` lists sessions with a 12-character prefix, creation,
+  last-seen, expiry and a `current` flag — never a token value;
+* `POST /api/auth/logout-all` revokes all sessions; idle expiry (10 days without
+  use) and absolute expiry both return 401 **and delete the row** (a defect where
+  the delete was rolled back by the raised exception was found here and fixed);
+* a database with only migration 001 applied upgrades cleanly: existing accounts
+  are grandfathered as confirmed with an audit row, and their email alerts keep
+  working (test `test_existing_accounts_are_grandfathered_as_confirmed`).
+
+**Not verified:** the flows against a real mailbox (same provider limitation as
+above), and no brute-force or account-takeover test beyond the in-process rate
+limit has been run.
+
 ## 2026-10-13 — email channel: proven as far as this environment allows
 
 | Check | Command | Actual result |

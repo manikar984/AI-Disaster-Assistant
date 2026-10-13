@@ -17,3 +17,22 @@ Severity is a screening estimate, not a government warning. USGS event confirmat
 
 ## Deployment boundary
 Single API process + single worker + persistent local volume, behind HTTPS reverse proxy. Admin is provisioned via local CLI, never public registration. SMTP requires an operator-provided verified mail service (costs/provider quotas apply); email consent required. Email integration must be staging-tested before enabling. In-app delivery works without external services. Map uses OpenStreetMap browser tiles (network and tile-policy compliance required); no unsupported area overlays. Production gates and retention in OPERATIONS.md.
+
+## Account security
+
+| Concern | Rule |
+|---|---|
+| Passwords | scrypt with a per-account salt, verified in constant time; 12–128 characters enforced by the API schema. |
+| Sessions | Random 256-bit cookie value; only its SHA-256 hash is stored. `HttpOnly`, `SameSite=Strict`, `Secure` when `COOKIE_SECURE=true`. Absolute lifetime `SESSION_DAYS` (default 30) and inactivity expiry `SESSION_IDLE_DAYS` (default 7); expired rows are deleted when encountered. |
+| Session control | `GET /api/sessions` lists this account's sessions (prefix, created, last seen, expiry, current flag) and never returns a token. `POST /api/auth/logout-all` revokes every session. |
+| Email confirmation | New accounts start unconfirmed. Confirmation uses a single-use token valid 24 h; in-app notifications work immediately, email deliveries only after confirmation. Accounts that predate the feature are grandfathered (audited). |
+| Password recovery | Single-use token valid 1 h, delivered by email; redeeming it sets the new password and revokes every session. `forgot` and `resend-verification` always answer identically so addresses cannot be enumerated; the operator command `python -m backend.cli reset-password` remains for locked-out accounts. |
+| Token storage | Only SHA-256 hashes of tokens are stored. Issuing a new token of a kind invalidates the previous one. Expired tokens are pruned opportunistically. |
+| Rate limiting | `/api/auth/*` is limited to 10 requests/minute per client in-process; the reverse proxy must add real per-client limits (see the runbook). |
+
+**Known limitation (documented, not hidden).** `POST /api/auth/register` answers
+409 when an address already has an account, which lets a caller test whether an
+address is registered. Removing that leak means answering 201 and emailing the
+existing account holder instead; it is deliberately deferred because the current
+behaviour is asserted by existing tests and product copy, and the exposure is
+limited to address existence.
