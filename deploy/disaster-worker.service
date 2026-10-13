@@ -1,0 +1,33 @@
+[Unit]
+Description=Disaster Assistant ingestion worker (source poller + delivery queue)
+Documentation=file:@APP_DIR@/docs/DEPLOYMENT.md
+After=network-online.target disaster-api.service
+Wants=network-online.target
+# Exactly one worker may run: it owns the source schedule and the email outbox.
+# Never start a second instance against the same database.
+StartLimitBurst=0
+
+[Service]
+Type=simple
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ETC_DIR@/env
+ExecStart=@APP_DIR@/.venv/bin/python -m backend.worker
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=@DATA_DIR@ @BACKUP_DIR@
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,34 @@
+[Unit]
+Description=Disaster Assistant API (FastAPI/uvicorn)
+Documentation=file:@APP_DIR@/docs/DEPLOYMENT.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@ETC_DIR@/env
+# Loopback only: the only public listener is Caddy on 443. Forwarded headers are
+# trusted from the proxy alone, so the application sees real client addresses
+# and the rate limiter cannot be bypassed with a forged X-Forwarded-For.
+ExecStart=@APP_DIR@/.venv/bin/uvicorn backend.app:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=always
+RestartSec=3
+TimeoutStopSec=20
+KillSignal=SIGINT
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+ReadWritePaths=@DATA_DIR@ @BACKUP_DIR@
+
+[Install]
+WantedBy=multi-user.target

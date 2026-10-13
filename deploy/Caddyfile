@@ -1,0 +1,46 @@
+# Caddy configuration for the disaster-assistant pilot.
+#
+# @DOMAIN@ is replaced by deploy/provision.sh with DISASTER_DOMAIN. Caddy obtains
+# and renews a Let's Encrypt certificate automatically once the hostname resolves
+# to this machine, and redirects HTTP to HTTPS.
+#
+# The application is the only thing behind this proxy: the API serves the built
+# frontend, so the browser, cookies and API share one origin and no CORS
+# exception is needed.
+
+@DOMAIN@ {
+	encode zstd gzip
+
+	# Matches the application's own body cap so an oversized request is rejected
+	# at the edge, before it reaches Python.
+	request_body {
+		max_size 20KB
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), camera=(), microphone=(), payment=(), usb=(), magnetometer=(), gyroscope=()"
+		Cross-Origin-Resource-Policy "same-origin"
+		X-Frame-Options "DENY"
+		# Exactly the policy in backend/security_headers.py (tests/test_headers.py
+		# compares the two strings byte for byte). It is repeated here because the
+		# proxy also covers responses the application never produces, such as an
+		# unhandled-exception 500 from Starlette's outermost error middleware.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data: https://tile.openstreetmap.org; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+		-Server
+	}
+
+	# Health and readiness are cheap and should also be reachable by monitors.
+	reverse_proxy 127.0.0.1:8000 {
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	log {
+		output file /var/log/caddy/disaster-access.log {
+			roll_size 20MiB
+			roll_keep 5
+		}
+	}
+}

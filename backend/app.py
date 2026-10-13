@@ -1,3 +1,5 @@
+import hashlib
+import logging
 import os
 import secrets
 import sqlite3
@@ -9,13 +11,17 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Depends, HTTPException, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from .db import connect, migrate, now
-from .security import current_user, admin_user, password_hash, password_ok, session_hash
-from .engine import ingest, qualify_notifications, GUIDANCE
+from .db import HEARTBEAT_KEY, connect, get_runtime_state, migrate, now, set_runtime_state
+from .security import SESSION_DAYS, current_user, admin_user, password_hash, password_ok, session_hash
+from .engine import CATEGORIES, GUIDANCE, LEVELS, VERIFICATIONS, ingest, qualify_notifications
+from .poller import source_rows, source_state_summary
+from . import mailer, security_headers
+from .tokens import consume as consume_token, issue as issue_token
+from .verification import RULE as CORROBORATION_RULE, assess as assess_evidence
 
 
 @asynccontextmanager
@@ -83,6 +89,19 @@ class Credentials(StrictModel):
     password: str = Field(min_length=12, max_length=128)
 
 
+class TokenOnly(StrictModel):
+    token: str = Field(min_length=20, max_length=200)
+
+
+class EmailOnly(StrictModel):
+    email: EmailStr
+
+
+class PasswordReset(StrictModel):
+    token: str = Field(min_length=20, max_length=200)
+    password: str = Field(min_length=12, max_length=128)
+
+
 class Location(StrictModel):
     name: str = Field(min_length=2, max_length=100)
     lat: float = Field(ge=-90, le=90)
@@ -107,9 +126,97 @@ class Review(StrictModel):
 
 def create_session(db, response, user_id):
     token = secrets.token_urlsafe(32)
+    stamp = datetime.now(timezone.utc)
     db.execute('DELETE FROM sessions WHERE expires_at<?', (now(),))
-    db.execute('INSERT INTO sessions VALUES (?,?,?)', (session_hash(token), user_id, (datetime.now(timezone.utc)+timedelta(days=7)).isoformat()))
-    response.set_cookie('session', token, httponly=True, secure=os.getenv('COOKIE_SECURE', 'false').lower() == 'true', samesite='strict', max_age=604800, path='/')
+    db.execute(
+        'INSERT INTO sessions(token,user_id,expires_at,created_at,last_seen_at) VALUES (?,?,?,?,?)',
+        (session_hash(token), user_id, (stamp + timedelta(days=SESSION_DAYS)).isoformat(), stamp.isoformat(), stamp.isoformat()),
+    )
+    response.set_cookie(
+        'session', token, httponly=True,
+        secure=os.getenv('COOKIE_SECURE', 'false').lower() == 'true',
+        samesite='strict', max_age=int(timedelta(days=SESSION_DAYS).total_seconds()), path='/',
+    )
+
+
+def public_base():
+    """Public origin of this deployment, for links inside email."""
+    return (os.getenv('PUBLIC_BASE_URL') or os.getenv('APP_ORIGIN') or 'http://localhost:5173').rstrip('/')
+
+
+def account_link(kind, token):
+    """Absolute link for an emailed token; the browser page redeems it."""
+    base = (os.getenv('PUBLIC_BASE_URL') or os.getenv('APP_ORIGIN') or 'http://localhost:5173').rstrip('/')
+    return f'{base}/?{kind}={token}'
+
+
+def deliver_token_email(kind, recipient, token):
+    """Send a verification or recovery link. Never raises: email may be off."""
+    try:
+        if kind == 'verify':
+            mailer.send_account_verification(recipient, account_link('verify', token))
+        else:
+            mailer.send_password_recovery(recipient, account_link('reset', token))
+    except Exception:
+        logging.getLogger('disaster-assistant').warning('account email not delivered: kind=%s reason=unavailable', kind)
+        return 'unavailable'
+    return 'sent'
+
+
+def generic_reply():
+    """Identical answer whether or not the address has an account."""
+    return {'ok': True, 'message': 'If that address has an account, a message has been sent to it.'}
+
+
+def deliver_account_notice(recipient, url):
+    """Tell the holder of an existing address that a second sign-up used it.
+
+    Never raises, and never tells the caller anything: it runs after the response
+    has been sent, so a duplicate sign-up is indistinguishable from a new one
+    both in its body and in how long it takes.
+    """
+    try:
+        mailer.send_account_notice(recipient, url)
+    except Exception:
+        logging.getLogger('disaster-assistant').warning('account notice not delivered: reason=unavailable')
+        return 'unavailable'
+    return 'sent'
+
+
+def notice_key(email):
+    """Runtime-state key for the per-address notice cooldown (no address stored)."""
+    return 'account_notice:' + hashlib.sha256(email.encode()).hexdigest()[:16]
+
+
+def notice_recently_sent(db, email, hours=1):
+    """True when this address already received a notice inside the cooldown.
+
+    Without it, anyone could use the (necessarily identical) registration answer
+    as a way to make the operator's mail provider post repeated mail to a third
+    party: a 10/minute rate limit per client is not enough on its own.
+    """
+    state = get_runtime_state(notice_key(email), db=db)
+    if not state:
+        return False
+    try:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(state[1])).total_seconds()
+    except ValueError:
+        return False
+    return age < hours * 3600
+
+
+@app.middleware('http')
+async def secure_headers(request: Request, call_next):
+    """Attach the security headers to every response this application returns.
+
+    Declared *after* `boundary` on purpose: Starlette inserts each new middleware
+    at the front of the stack, so the last one declared is the outermost. The
+    early 403/413/429 responses that `boundary` returns without calling the route
+    therefore still pass through here and carry the headers — a test pins that,
+    because the ordering is easy to get wrong (and was, until it was measured).
+    See `backend/security_headers.py` for the policy and its exceptions.
+    """
+    return security_headers.apply(await call_next(request))
 
 
 @app.get('/api/health')
@@ -119,15 +226,147 @@ def health():
     return {'status': 'ok', 'version': '0.1.0'}
 
 
-@app.post('/api/auth/register', status_code=201)
-def register(data: Credentials, response: Response):
+@app.post('/api/auth/register', status_code=202)
+def register(data: Credentials, background: BackgroundTasks):
+    """Start an account. The answer never depends on whether the address exists.
+
+    Both branches return 202 with the same body and the same shape of work: a new
+    address gets a confirmation link, an existing one gets a sign-in notice to its
+    owner, and the mail is sent after the response, so neither the body nor the
+    response time can be used to test whether an address is registered.
+
+    Registration does not sign the caller in. That was the other half of the leak
+    (`docs/ARCHITECTURE.md`): a session was created for an address the caller had
+    not proven they own. The client signs in with the password it just supplied.
+    """
+    email = str(data.email).lower()
+    # Hash before branching. scrypt costs tens of milliseconds, so a branch that
+    # skipped it would answer measurably faster than one that did - a timing test
+    # for "is this address registered?" that would defeat the whole point. Both
+    # paths pay the same cost; the duplicate's result is discarded.
+    candidate = password_hash(data.password)
+    existing = False
+    throttled = False
     with connect() as db:
-        try:
-            cursor = db.execute('INSERT INTO users(email,password,created_at) VALUES (?,?,?)', (str(data.email).lower(), password_hash(data.password), now()))
-        except sqlite3.IntegrityError:
-            raise HTTPException(409, 'Unable to register with these details')
-        create_session(db, response, cursor.lastrowid)
-    return {'ok': True}
+        row = db.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        if row:
+            existing = True
+            throttled = notice_recently_sent(db, email)
+            if not throttled:
+                set_runtime_state(db, notice_key(email), {'kind': 'duplicate-signup-notice'})
+            # Worth an audit line: a repeated sign-up attempt is exactly the signal
+            # an operator wants when an address is being targeted.
+            db.execute(
+                'INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)',
+                (None, 'register-duplicate',
+                 'Sign-up refused for an existing address; the holder was notified' if not throttled
+                 else 'Sign-up refused for an existing address; notice already sent inside the cooldown', now()),
+            )
+        else:
+            cursor = db.execute('INSERT INTO users(email,password,created_at) VALUES (?,?,?)', (email, candidate, now()))
+            user_id = cursor.lastrowid
+            db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user_id, 'register', 'Account created; email awaiting confirmation', now()))
+            token = issue_token(db, user_id, 'verify')
+    if existing:
+        if not throttled:
+            background.add_task(deliver_account_notice, email, public_base())
+    else:
+        background.add_task(deliver_token_email, 'verify', email, token)
+    return {
+        'ok': True,
+        'message': 'If that address can receive mail, a message is on its way to it. '
+                   'Sign in with your password to continue.',
+    }
+
+
+@app.post('/api/auth/verify')
+def verify_email(data: TokenOnly):
+    """Redeem an emailed confirmation token. Single use, 24-hour validity."""
+    with connect() as db:
+        user_id = consume_token(db, 'verify', data.token)
+        if user_id is None:
+            raise HTTPException(400, 'That confirmation link is invalid or has expired')
+        db.execute('UPDATE users SET email_verified=1, email_verified_at=? WHERE id=?', (now(), user_id))
+        email = db.execute('SELECT email FROM users WHERE id=?', (user_id,)).fetchone()['email']
+        db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user_id, 'verify-email', 'Address confirmed by the account holder', now()))
+    return {'ok': True, 'email': email, 'email_verified': True}
+
+
+@app.post('/api/auth/resend-verification', status_code=202)
+def resend_verification(data: EmailOnly, background: BackgroundTasks):
+    """Re-issue a confirmation link. The answer never reveals whether the account exists.
+
+    The send happens after the response. Sending inside the request would answer
+    "account exists" through latency alone, for the same reason `forgot` must not.
+    """
+    email = str(data.email).lower()
+    token = None
+    with connect() as db:
+        row = db.execute('SELECT id,email_verified FROM users WHERE email=?', (email,)).fetchone()
+        if row and not row['email_verified']:
+            token = issue_token(db, row['id'], 'verify')
+    if token:
+        background.add_task(deliver_token_email, 'verify', email, token)
+    return generic_reply()
+
+
+@app.post('/api/auth/forgot', status_code=202)
+def forgot_password(data: EmailOnly, background: BackgroundTasks):
+    """Start password recovery. Always the same answer, so accounts cannot be enumerated."""
+    email = str(data.email).lower()
+    token = None
+    with connect() as db:
+        row = db.execute('SELECT id FROM users WHERE email=?', (email,)).fetchone()
+        if row:
+            token = issue_token(db, row['id'], 'reset')
+    if token:
+        background.add_task(deliver_token_email, 'reset', email, token)
+    return generic_reply()
+
+
+@app.post('/api/auth/reset')
+def reset_password(data: PasswordReset):
+    """Redeem a recovery token: single use, one hour, and signs out every device."""
+    with connect() as db:
+        user_id = consume_token(db, 'reset', data.token)
+        if user_id is None:
+            raise HTTPException(400, 'That recovery link is invalid or has expired')
+        db.execute('UPDATE users SET password=? WHERE id=?', (password_hash(data.password), user_id))
+        db.execute('DELETE FROM sessions WHERE user_id=?', (user_id,))
+        db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user_id, 'reset-password', 'Password recovered with a single-use link; all sessions revoked', now()))
+    return {'ok': True, 'message': 'Password updated. Sign in again on each device.'}
+
+
+@app.get('/api/sessions')
+def sessions(request: Request, user=Depends(current_user)):
+    """This account's own sessions. Session tokens are never returned, only a prefix."""
+    current = session_hash(request.cookies.get('session', ''))
+    with connect() as db:
+        rows = db.execute(
+            'SELECT token,created_at,last_seen_at,expires_at FROM sessions WHERE user_id=? '
+            'ORDER BY COALESCE(last_seen_at,created_at) DESC',
+            (user['id'],),
+        ).fetchall()
+    return [
+        {
+            'id': row['token'][:12],
+            'current': row['token'] == current,
+            'created_at': row['created_at'],
+            'last_seen_at': row['last_seen_at'],
+            'expires_at': row['expires_at'],
+        }
+        for row in rows
+    ]
+
+
+@app.post('/api/auth/logout-all')
+def logout_all(request: Request, response: Response, user=Depends(current_user)):
+    """Revoke every session for this account, including the current one."""
+    with connect() as db:
+        removed = db.execute('DELETE FROM sessions WHERE user_id=?', (user['id'],)).rowcount
+        db.execute('INSERT INTO audit(actor_id,action,note,created_at) VALUES (?,?,?,?)', (user['id'], 'logout-all', f'{removed} sessions revoked by the account holder', now()))
+    response.delete_cookie('session', path='/')
+    return {'ok': True, 'sessions_revoked': removed}
 
 
 @app.post('/api/auth/login')
@@ -190,6 +429,19 @@ def remove_location(location_id: int, user=Depends(current_user)):
     return {'ok': True}
 
 
+def _with_precision(row):
+    """Never let a coordinate-less record claim a precise geographic position.
+
+    Rows written before the geo_precision column existed carry the column default;
+    they are corrected in migration 003 and guarded here so an API response can
+    never label a place we do not actually have coordinates for.
+    """
+    item = dict(row)
+    if item.get('lat') is None or item.get('lon') is None:
+        item['geo_precision'] = 'unknown'
+    return item
+
+
 @app.get('/api/incidents')
 def incidents(mode: Literal['live', 'sample', 'all'] = 'live', severity: str = '', type: str = '', q: str = ''):
     where, params = [], []
@@ -204,7 +456,7 @@ def incidents(mode: Literal['live', 'sample', 'all'] = 'live', severity: str = '
         params.extend(['%'+q[:150]+'%']*2)
     sql = 'SELECT i.*, (SELECT count(DISTINCT r.source) FROM incident_reports ir JOIN reports r ON r.id=ir.report_id WHERE ir.incident_id=i.id) source_count FROM incidents i'
     with connect() as db:
-        return [dict(r) for r in db.execute(sql + (' WHERE '+' AND '.join(where) if where else '')+' ORDER BY i.last_updated DESC LIMIT 200', params)]
+        return [_with_precision(r) for r in db.execute(sql + (' WHERE '+' AND '.join(where) if where else '')+' ORDER BY i.last_updated DESC LIMIT 200', params)]
 
 
 @app.get('/api/incidents/{incident_id}')
@@ -213,8 +465,10 @@ def incident(incident_id: int):
         row = db.execute('SELECT * FROM incidents WHERE id=?', (incident_id,)).fetchone()
         if not row:
             raise HTTPException(404, 'Incident not found')
-        result = dict(row)
-        result['reports'] = [dict(r) for r in db.execute('SELECT r.id,r.source,r.url,r.text,r.published_at,r.collected_at,r.mode,r.official FROM reports r JOIN incident_reports ir ON ir.report_id=r.id WHERE ir.incident_id=?', (incident_id,))]
+        result = _with_precision(row)
+        result['reports'] = [_with_precision(r) for r in db.execute('SELECT r.id,r.source,r.url,r.text,r.published_at,r.collected_at,r.mode,r.official,r.lat,r.lon,r.geo_precision FROM reports r JOIN incident_reports ir ON ir.report_id=r.id WHERE ir.incident_id=?', (incident_id,))]
+        independent, reason, domains = assess_evidence(db, incident_id)
+        result['evidence'] = {'independent': independent, 'reason': reason, 'domains': domains, 'rule': CORROBORATION_RULE}
         result['timeline'] = [dict(r) for r in db.execute('SELECT created_at,status,note FROM timeline WHERE incident_id=? ORDER BY id DESC', (incident_id,))]
         result['guidance'] = GUIDANCE
         result['guidance_url'] = 'https://www.ready.gov/'+('earthquakes' if row['type'] == 'Earthquake' else 'be-informed')
@@ -223,14 +477,79 @@ def incident(incident_id: int):
 
 @app.get('/api/sources')
 def sources():
-    with connect() as db:
-        rows = [dict(r) for r in db.execute('SELECT * FROM sources')]
-    for row in rows:
-        if not row['enabled']:
-            row['status'] = 'disabled'
-        elif row['last_success'] and datetime.now(timezone.utc)-datetime.fromisoformat(row['last_success']) > timedelta(minutes=10):
-            row['status'] = 'stale'
-    return rows
+    return source_rows()
+
+
+@app.get('/api/ready')
+def ready():
+    """Readiness: database, worker liveness and source health (no secrets)."""
+    problems = []
+    try:
+        with connect() as db:
+            db.execute('SELECT 1')
+        database = True
+    except sqlite3.Error:
+        database = False
+        problems.append('database unavailable')
+    heartbeat = get_runtime_state(HEARTBEAT_KEY)
+    age = None
+    if heartbeat:
+        age = max(0, int((datetime.now(timezone.utc) - datetime.fromisoformat(heartbeat[1])).total_seconds()))
+    worker = 'unknown' if age is None else ('alive' if age <= 90 else 'stalled')
+    if worker == 'unknown':
+        problems.append('worker has never reported a heartbeat')
+    elif worker == 'stalled':
+        problems.append(f'worker heartbeat is {age} seconds old')
+    summary = source_state_summary()
+    if not summary['enabled']:
+        problems.append('no live source is enabled')
+    if summary['error']:
+        problems.append(f"{summary['error']} source(s) failing")
+    if summary['stale']:
+        problems.append(f"{summary['stale']} source(s) stale")
+    # Reported for operators only: an unconfigured mail provider does not make the
+    # deployment unready (in-app alerts work), but the release gate needs to see it.
+    try:
+        email = 'configured' if mailer.settings()['configured'] else 'not configured'
+    except mailer.MailError as exc:
+        email = f'misconfigured: {exc}'
+    return {
+        'status': 'ready' if not problems else 'degraded',
+        'version': '0.2.0',
+        'problems': problems,
+        'checks': {'database': database, 'worker': worker, 'worker_heartbeat_age_seconds': age, 'email': email},
+        'sources': summary,
+    }
+
+
+@app.get('/api/policy')
+def policy():
+    """The documented decision policy, so it can be reviewed by users."""
+    return {
+        'categories': list(CATEGORIES),
+        'severity_levels': list(LEVELS),
+        'verification_states': list(VERIFICATIONS),
+        'corroboration_rule': CORROBORATION_RULE,
+        'severity_notes': [
+            'Severity is a screening estimate, not a government warning level.',
+            'The reporting source decides severity when it publishes one (CAP severity, GDACS alert level, USGS magnitude).',
+            'Wording alone never exceeds High; report volume never raises severity.',
+            'Only independent evidence changes the verification state.',
+        ],
+        'notification_gates': [
+            'Live or delayed provenance (never sample/simulated)',
+            'Published within the last 6 hours',
+            'An established location',
+            'Corroborated or officially confirmed verification',
+            'Within the saved radius and above the chosen minimum severity',
+            'Once per (user, incident, version); non-critical alerts capped per hour',
+        ],
+        'guidance': GUIDANCE,
+        'disclaimer': (
+            'Disaster Assistant is not an official emergency warning service. Always follow local '
+            'emergency authorities and contact emergency services when in immediate danger.'
+        ),
+    }
 
 
 @app.post('/api/reports', status_code=201)

@@ -1,9 +1,11 @@
 import os
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from backend.app import app, limits
 from backend.db import connect, migrate, now
+from backend import db as backend_db
 from backend.engine import classify, distance, ingest, qualify_notifications
 from backend.security import password_hash, password_ok
 from backend.worker import normalize_usgs, poll_usgs, deliver_email
@@ -20,8 +22,18 @@ def client(tmp_path, monkeypatch):
         yield c
 
 
-def signup(c, email='person@example.com'):
-    return c.post('/api/auth/register', json={'email': email, 'password': 'Strong-test-password-47'})
+def signup(c, email='person@example.com', password='Strong-test-password-47'):
+    """Register and sign in, the two calls a browser makes.
+
+    Registration deliberately no longer signs the caller in: the answer must be
+    identical for a new and an already-registered address, and a session for an
+    unproven address was part of the enumeration leak
+    (`test_registration_never_reveals_whether_an_address_is_known`).
+    """
+    response = c.post('/api/auth/register', json={'email': email, 'password': password})
+    if response.status_code == 202:
+        c.post('/api/auth/login', json={'email': email, 'password': password})
+    return response
 
 
 def record(**kwargs):
@@ -32,6 +44,16 @@ def subscribe(c, **kwargs):
     return c.post('/api/locations', json=dict(dict(name='Test home', lat=10., lon=76., radius=50, min_severity='High', email_enabled=False), **kwargs))
 
 
+def confirm_email(email='person@example.com'):
+    """Mark the address confirmed, exactly as redeeming the emailed link does.
+
+    Accounts start unconfirmed: email deliveries require confirmation, while
+    in-app notifications do not (tests/test_auth.py covers that rule directly).
+    """
+    with connect() as db:
+        db.execute('UPDATE users SET email_verified=1 WHERE email=?', (email,))
+
+
 def test_health_migration_idempotency(client):
     migrate()
     assert client.get('/api/health').json()['status'] == 'ok'
@@ -40,9 +62,12 @@ def test_health_migration_idempotency(client):
 
 def test_registration_login_logout(client):
     response = signup(client)
-    assert response.status_code == 201
-    assert 'httponly' in response.headers['set-cookie'].lower()
-    assert 'samesite=strict' in response.headers['set-cookie'].lower()
+    assert response.status_code == 202
+    # The cookie belongs to the sign-in, not to registration: the same flags the
+    # application documents must survive the split.
+    login = client.post('/api/auth/login', json={'email': 'person@example.com', 'password': 'Strong-test-password-47'})
+    assert 'httponly' in login.headers['set-cookie'].lower()
+    assert 'samesite=strict' in login.headers['set-cookie'].lower()
     assert client.get('/api/me').json()['role'] == 'user'
     assert client.post('/api/auth/logout').status_code == 200
     assert client.get('/api/me').status_code == 401
@@ -56,7 +81,7 @@ def test_password_hashing():
 
 def test_bad_login_and_duplicate(client):
     signup(client)
-    assert signup(client).status_code == 409
+    assert signup(client).status_code == 202
     assert client.post('/api/auth/login', json={'email':'missing@example.com','password':'invalid-long-password'}).status_code == 401
 
 
@@ -165,7 +190,7 @@ def test_admin_review_audit_and_resolution(client):
     client.patch(f'/api/admin/incidents/{id}',json={'verification':'Resolved','severity':'Low','note':'Resolution verified in controlled test fixture.'})
     assert len(client.get('/api/notifications').json())==2
     overview=client.get('/api/admin/overview').json()
-    assert len(overview['audit'])==2
+    assert len([row for row in overview['audit'] if row['action']=='review'])==2
 
 
 def test_account_deletion_cascades(client):
@@ -197,7 +222,7 @@ def test_ingestion_failure_visible_no_fallback(client,monkeypatch):
 
 
 def test_email_retry_not_fake_delivery(client):
-    signup(client);subscribe(client,email_enabled=True)
+    signup(client);confirm_email();subscribe(client,email_enabled=True)
     with connect() as db:
         ingest(db,record());qualify_notifications(db)
     deliver_email()
@@ -248,7 +273,7 @@ def test_notification_private_isolation(client):
 
 
 def test_email_cancelled_after_consent_removed(client):
-    signup(client);subscribe(client,email_enabled=True)
+    signup(client);confirm_email();subscribe(client,email_enabled=True)
     with connect() as db:
         ingest(db,record());qualify_notifications(db)
         db.execute('DELETE FROM locations')
@@ -258,17 +283,22 @@ def test_email_cancelled_after_consent_removed(client):
 
 
 def test_mock_smtp_acceptance(client,monkeypatch):
-    signup(client);subscribe(client,email_enabled=True)
+    signup(client);confirm_email();subscribe(client,email_enabled=True)
     with connect() as db:
         ingest(db,record());qualify_notifications(db)
     monkeypatch.setenv('SMTP_HOST','smtp.example.com')
     monkeypatch.setenv('SMTP_FROM','alerts@example.com')
     sent=[]
     class FakeSMTP:
+        # Exercises the mailer's SMTP control flow without a socket. The real
+        # protocol conversation (STARTTLS, AUTH, DATA) is covered end to end in
+        # tests/test_email.py against a real SMTP server.
         def __init__(self,*a,**k): pass
         def __enter__(self): return self
         def __exit__(self,*a): pass
         def starttls(self,**k): pass
+        def ehlo(self,*a,**k): return (250,b'ok')
+        def noop(self): return (250,b'ok')
         def send_message(self,msg): sent.append(msg)
     monkeypatch.setattr('smtplib.SMTP',FakeSMTP)
     deliver_email()
@@ -286,3 +316,34 @@ def test_successful_feed_skips_malformed(client,monkeypatch):
         assert db.execute('SELECT count(*) FROM incidents').fetchone()[0]==1
         assert db.execute('SELECT errors FROM ingestion_runs').fetchone()[0]==1
         assert db.execute('SELECT status FROM sources').fetchone()[0]=='degraded'
+
+
+def test_legacy_rows_without_coordinates_are_corrected_on_upgrade(tmp_path, monkeypatch):
+    """A database created before the precision column must not keep claiming 'point'."""
+    monkeypatch.setenv('DATABASE_PATH', str(tmp_path/'legacy.db'))
+    monkeypatch.setenv('USGS_ENABLED', 'false')
+    migrations = Path(backend_db.__file__).with_name('migrations')
+    with connect() as db:
+        db.executescript((migrations/'001_initial.sql').read_text())
+        # A pre-M4 database records exactly this: schema 001 applied, nothing else.
+        db.execute('CREATE TABLE IF NOT EXISTS migrations(name TEXT PRIMARY KEY)')
+        db.execute("INSERT INTO migrations VALUES ('001_initial.sql')")
+        db.execute("INSERT INTO incidents(type,location,lat,lon,severity,verification,confidence,mode,summary,first_detected,last_updated,published_at) VALUES ('Earthquake','Unknown',NULL,NULL,'Medium','Unverified','Limited evidence','live','legacy row',?,?,?)", (now(), now(), now()))
+        db.execute("INSERT INTO reports(source,external_id,text,location,lat,lon,published_at,collected_at,mode,official,raw) VALUES ('USGS','legacy-1','legacy text','Unknown',NULL,NULL,?,?,'live',1,'{}')", (now(), now()))
+    migrate()
+    with connect() as db:
+        assert db.execute('SELECT geo_precision FROM incidents').fetchone()['geo_precision'] == 'unknown'
+        assert db.execute('SELECT geo_precision FROM reports').fetchone()['geo_precision'] == 'unknown'
+
+
+def test_incident_api_never_claims_precision_without_coordinates(client):
+    """A stored 'point' with no coordinates must be reported as unknown, not as a place."""
+    with connect() as db:
+        incident_id = ingest(db, record(lat=None, lon=None, external_id='no-coords'))
+        db.execute("UPDATE incidents SET geo_precision='point' WHERE id=?", (incident_id,))
+        db.execute("UPDATE reports SET geo_precision='point' WHERE external_id='no-coords'")
+    listed = client.get('/api/incidents').json()
+    assert [row['geo_precision'] for row in listed] == ['unknown']
+    detail = client.get(f'/api/incidents/{incident_id}').json()
+    assert detail['geo_precision'] == 'unknown'
+    assert detail['reports'][0]['geo_precision'] == 'unknown'

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Disaster Assistant database backup every night
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+RandomizedDelaySec=600
+Unit=disaster-backup.service
+
+[Install]
+WantedBy=timers.target
