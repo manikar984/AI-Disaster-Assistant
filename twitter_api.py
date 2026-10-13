@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 # -------------------------
 # 1. Authenticate with X (Twitter) API
 # -------------------------
-BEARER_TOKEN = "YOUR_TWITTER_BEARER_TOKEN"  # Replace with your actual token
+BEARER_TOKEN = os.getenv("X_BEARER_TOKEN", "")  # Replace with your actual token
 client = tweepy.Client(bearer_token=BEARER_TOKEN)
 
 # -------------------------
@@ -25,6 +25,8 @@ def fetch_disaster_tweets(
     Fetches latest disaster-related tweets.
     Returns a DataFrame with columns: text, location, time
     """
+    if not BEARER_TOKEN:
+        return pd.DataFrame([])
     try:
         tweets = client.search_recent_tweets(
             query=query,
@@ -80,14 +82,6 @@ def merge_with_static_data(static_file="disaster_data.json"):
 
     # Optionally, remove duplicate tweets based on text
     combined_df = combined_df.drop_duplicates(subset="text", keep="last").reset_index(drop=True)
-
-    # Optional: Save updated static dataset
-    try:
-        with open(static_file, "w") as f:
-            json.dump(combined_df.to_dict(orient="records"), f, indent=4, default=str)
-        print("✅ Static dataset updated successfully.")
-    except Exception as e:
-        print(f"⚠️ Could not save static dataset: {e}")
 
     return combined_df
 

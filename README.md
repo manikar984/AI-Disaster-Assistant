@@ -1,55 +1,76 @@
-# AI-Disaster-Assistant
-AI-powered system to detect, classify, summarize, and visualize disaster-related posts in real-time from social media and static datasets.
-Features
+# Disaster Assistant
 
-Disaster Classification: Detects whether a post is related to a disaster using keyword-based analysis.
+An evidence-first disaster monitoring **pilot**, evolved from the original Streamlit prototype. React/TypeScript frontend, FastAPI backend, SQLite persistence, a USGS polling adapter, and location-based notification qualification.
 
-Severity Detection: Assesses the severity of disasters as High, Medium, or Low based on textual cues.
+**Not production-certified. Not a government warning system.** Follow official emergency instructions. Live feeds are opt-in; historical samples are explicitly separated and cannot generate notifications.
 
-Summarization: Generates short summaries of disaster-related posts for quick understanding.
+## What works in this implementation
+- Responsive dashboard with filters, searchable incident feed, offline vector map and optional street tiles.
+- Evidence details, provenance labels, timestamps, event timeline and authoritative guidance links.
+- Registration, login/logout, hashed-password cookie sessions, private saved locations, consent, alert history and account deletion.
+- Normalized durable reports, conservative classification/severity screening, duplicate suppression, nearby community grouping, official event revisions.
+- Single-worker USGS polling with backoff, malformed-record isolation and visible source health. Network access needed; live fetching unverified in Arena.
+- Geographic/severity/freshness/trust gates, in-app notifications, SMTP outbox with retries and delivery attempt logs. Real SMTP provider delivery unverified.
+- Administrator status/severity reviews and audit log, ingestion/delivery inspection.
+- Versioned SQL migration, configuration example, container configuration, CI definition and tests.
 
-Real-Time Data Integration: Fetches live disaster-related posts from X (Twitter) while handling rate limits and caching.
+No validated ML accuracy, calibrated probability, automated independent-source corroboration, browser push, SMS, WhatsApp, live X/RSS/CAP adapter, or public production deployment is claimed. See [limitations and deployment gates](docs/OPERATIONS.md).
 
-Interactive Map: Visualizes disaster events with severity indicators on an interactive map.
+## Quick start
 
-Streamlit Dashboard: Provides an easy-to-use web interface to explore and analyze disaster data.
+```sh
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.lock
+npm ci --prefix web
+npm run build --prefix web
+uvicorn backend.app:app --host 0.0.0.0 --port 8000
+```
 
-Tech Stack
+Visit `http://localhost:8000`. API docs: `/docs`. Fresh installs contain no fake live events.
 
-Python 3.x
+```sh
+# Optional, explicit historical sample import:
+python -m backend.cli sample
+# Enable USGS only on a host that can reach the public feed:
+USGS_ENABLED=true python -m backend.worker
+# Administrator setup (password entered privately):
+python -m backend.cli admin --email admin@example.com
+```
 
-Streamlit
+Set the same `USGS_ENABLED` value for API and worker. See `.env.example` and the runbook for environment loading, production cookies, SMTP and Compose. Never commit `.env`.
 
-Pandas
+## Verification
 
-Folium
+```sh
+python -m pytest -q
+npm run build --prefix web
+npm audit --prefix web
+# Optional dependency audit:
+pip install pip-audit
+pip-audit -r requirements.lock
+# Browser smoke: first start a built server on 8001 with a disposable DB and explicit samples.
+npm run test:browser --prefix web
+```
 
-Tweepy (Twitter API)
+See [actual verification results](docs/VERIFICATION.md), not just these commands.
 
-How It Works
+## Repository guide
 
-Load a static dataset of disaster-related posts.
+| Path | Purpose |
+|---|---|
+| `backend/app.py`, `security.py` | API, sessions, input/ownership boundaries |
+| `backend/engine.py` | Screening, grouping, geo matching, qualification |
+| `backend/worker.py` | USGS adapter, scheduled ingestion, SMTP outbox |
+| `backend/db.py`, `migrations/` | Persistence and versioned SQL schema |
+| `backend/cli.py` | Explicit samples, admin provisioning, password reset |
+| `web/src/` | React dashboard, map, account and admin workflows |
+| `tests/`, `web/tests/` | Backend and browser integration verification |
+| `docs/AUDIT.md` | Actual repository findings and implementation plan |
+| `docs/ARCHITECTURE.md` | Contracts, trust model and technology decisions |
+| `docs/OPERATIONS.md` | Setup, deployment, security, costs, retention, remaining work |
 
-Fetch live tweets from X (Twitter) using relevant disaster keywords.
+## Preserved legacy prototype
+`prototype.py`, `twitter_api.py`, `disaster_data.json`, `disaster_map.html` and the original presentation remain. The prototype is a separate legacy demonstration, not the new service. Install `requirements-legacy.txt` if you need to run it. It was inspected, but not runtime-verified here. Fixture overwrites, hardcoded credential, unsafe popup interpolation and misleading default coordinates were corrected.
 
-Merge static and live data into a unified dataset.
-
-Apply AI-based classification, severity detection, and summarization.
-
-Display the results in an interactive Streamlit dashboard with a map visualization.
-
-Installation
-git clone https://github.com/your-username/AI-Disaster-Assistant.git
-cd AI-Disaster-Assistant
-pip install -r requirements.txt
-streamlit run prototype.py
-
-Usage
-
-View the disaster table with classification, severity, and summaries.
-
-Filter by location to explore specific regions.
-
-Enter custom disaster posts for real-time analysis.
-
-Visualize disasters on the interactive map with color-coded severity markers.
+**Security action for the repository owner:** revoke the apparent X token previously embedded in `prototype.py`. It has been removed from the working tree, but remains in Git history; assess history cleanup after rotation.
