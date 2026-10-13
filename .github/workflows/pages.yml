@@ -29,7 +29,7 @@ jobs:
 
       - run: npm ci --prefix web
 
-      - run: npm run build --prefix web
+      - run: npm run build --prefix web -- --base=/AI-Disaster-Assistant/
 
       - uses: actions/configure-pages@v5
 
