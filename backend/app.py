@@ -13,9 +13,11 @@ from fastapi import FastAPI, Depends, HTTPException, Request, Response
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from .db import connect, migrate, now
+from .db import HEARTBEAT_KEY, connect, get_runtime_state, migrate, now
 from .security import current_user, admin_user, password_hash, password_ok, session_hash
-from .engine import ingest, qualify_notifications, GUIDANCE
+from .engine import CATEGORIES, GUIDANCE, LEVELS, VERIFICATIONS, ingest, qualify_notifications
+from .poller import source_rows, source_state_summary
+from .verification import RULE as CORROBORATION_RULE, assess as assess_evidence
 
 
 @asynccontextmanager
@@ -214,7 +216,9 @@ def incident(incident_id: int):
         if not row:
             raise HTTPException(404, 'Incident not found')
         result = dict(row)
-        result['reports'] = [dict(r) for r in db.execute('SELECT r.id,r.source,r.url,r.text,r.published_at,r.collected_at,r.mode,r.official FROM reports r JOIN incident_reports ir ON ir.report_id=r.id WHERE ir.incident_id=?', (incident_id,))]
+        result['reports'] = [dict(r) for r in db.execute('SELECT r.id,r.source,r.url,r.text,r.published_at,r.collected_at,r.mode,r.official,r.geo_precision FROM reports r JOIN incident_reports ir ON ir.report_id=r.id WHERE ir.incident_id=?', (incident_id,))]
+        independent, reason, domains = assess_evidence(db, incident_id)
+        result['evidence'] = {'independent': independent, 'reason': reason, 'domains': domains, 'rule': CORROBORATION_RULE}
         result['timeline'] = [dict(r) for r in db.execute('SELECT created_at,status,note FROM timeline WHERE incident_id=? ORDER BY id DESC', (incident_id,))]
         result['guidance'] = GUIDANCE
         result['guidance_url'] = 'https://www.ready.gov/'+('earthquakes' if row['type'] == 'Earthquake' else 'be-informed')
@@ -223,14 +227,73 @@ def incident(incident_id: int):
 
 @app.get('/api/sources')
 def sources():
-    with connect() as db:
-        rows = [dict(r) for r in db.execute('SELECT * FROM sources')]
-    for row in rows:
-        if not row['enabled']:
-            row['status'] = 'disabled'
-        elif row['last_success'] and datetime.now(timezone.utc)-datetime.fromisoformat(row['last_success']) > timedelta(minutes=10):
-            row['status'] = 'stale'
-    return rows
+    return source_rows()
+
+
+@app.get('/api/ready')
+def ready():
+    """Readiness: database, worker liveness and source health (no secrets)."""
+    problems = []
+    try:
+        with connect() as db:
+            db.execute('SELECT 1')
+        database = True
+    except sqlite3.Error:
+        database = False
+        problems.append('database unavailable')
+    heartbeat = get_runtime_state(HEARTBEAT_KEY)
+    age = None
+    if heartbeat:
+        age = max(0, int((datetime.now(timezone.utc) - datetime.fromisoformat(heartbeat[1])).total_seconds()))
+    worker = 'unknown' if age is None else ('alive' if age <= 90 else 'stalled')
+    if worker == 'unknown':
+        problems.append('worker has never reported a heartbeat')
+    elif worker == 'stalled':
+        problems.append(f'worker heartbeat is {age} seconds old')
+    summary = source_state_summary()
+    if not summary['enabled']:
+        problems.append('no live source is enabled')
+    if summary['error']:
+        problems.append(f"{summary['error']} source(s) failing")
+    if summary['stale']:
+        problems.append(f"{summary['stale']} source(s) stale")
+    return {
+        'status': 'ready' if not problems else 'degraded',
+        'version': '0.2.0',
+        'problems': problems,
+        'checks': {'database': database, 'worker': worker, 'worker_heartbeat_age_seconds': age},
+        'sources': summary,
+    }
+
+
+@app.get('/api/policy')
+def policy():
+    """The documented decision policy, so it can be reviewed by users."""
+    return {
+        'categories': list(CATEGORIES),
+        'severity_levels': list(LEVELS),
+        'verification_states': list(VERIFICATIONS),
+        'corroboration_rule': CORROBORATION_RULE,
+        'severity_notes': [
+            'Severity is a screening estimate, not a government warning level.',
+            'The reporting source decides severity when it publishes one (CAP severity, GDACS alert level, USGS magnitude).',
+            'Wording alone never exceeds High; report volume never raises severity.',
+            'Only independent evidence changes the verification state.',
+        ],
+        'notification_gates': [
+            'Live or delayed provenance (never sample/simulated)',
+            'Published within the last 6 hours',
+            'An established location',
+            'Corroborated or officially confirmed verification',
+            'Within the saved radius and above the chosen minimum severity',
+            'Once per (user, incident, version); non-critical alerts capped per hour',
+        ],
+        'guidance': GUIDANCE,
+        'disclaimer': (
+            'Disaster Assistant is not an official emergency warning service. Always follow local '
+            'emergency authorities and contact emergency services when in immediate danger.'
+        ),
+    }
 
 
 @app.post('/api/reports', status_code=201)
