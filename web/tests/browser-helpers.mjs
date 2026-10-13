@@ -92,18 +92,44 @@ export function instrumentPage(page) {
   return evidence;
 }
 
-export async function reportFailure(context, page, evidence, error) {
+/** Print a checkpoint so a truncated CI log still shows how far the flow got. */
+export function checkpoint(name) {
+  console.log(`[smoke] ${name}`);
+}
+
+/** Read the numbers behind an environment-dependent assertion failure. */
+export async function layoutSnapshot(page) {
+  try {
+    return await page.evaluate(() => ({
+      rows: document.querySelectorAll('.incident-row').length,
+      scroll_width: document.documentElement.scrollWidth,
+      viewport_width: window.innerWidth,
+      hidden_rows: document.querySelectorAll('.incident-row:not([hidden])').length,
+      overflow: Array.from(document.querySelectorAll('body *'))
+        .filter((element) => element.getBoundingClientRect().right > window.innerWidth + 1)
+        .slice(0, 5)
+        .map((element) => `${element.tagName}.${element.className}`)
+        .join(' | ')
+    }));
+  } catch (error) {
+    return { snapshot: `unavailable (${error.message.split('\n')[0]})` };
+  }
+}
+
+export async function reportFailure(context, page, evidence, error, extra = {}) {
+  const message = error && error.message ? error.message.split('\n').slice(0, 3).join(' / ') : String(error);
   const lines = [
     '--- SMOKE TEST FAILURE DIAGNOSTICS ---',
     `browser channel : ${context.channel}`,
     `node            : ${process.version} on ${process.platform}/${process.arch}`,
     `TEST_URL        : ${process.env.TEST_URL || '(default)'}`,
     `page url        : ${page ? page.url() : '(no page)'}`,
-    `error           : ${error && error.message ? error.message.split('\n')[0] : error}`,
+    `error           : ${message.slice(0, 300)}`,
     `page errors     : ${evidence.pageErrors.length}`,
     `console errors  : ${evidence.consoleErrors.length}`,
     `failed requests : ${evidence.failedRequests.length}`
   ];
+  for (const [label, value] of Object.entries(extra)) lines.push(`${label.padEnd(16)}: ${String(value).slice(0, 300)}`);
   for (const [label, items] of [
     ['page error', evidence.pageErrors],
     ['console error', evidence.consoleErrors],
